@@ -1,0 +1,23 @@
+# Build (CMake)
+build/
+cmake-build-*/
+
+# Compiladores/IDE
+*.o
+*.obj
+*.exe
+compile_commands.json
+.cache/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# Preferências locais do jogador (gerado em tempo de execução)
+settings.ini
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,2 @@
+#pragma once
+#define GA_ROOT "@CMAKE_SOURCE_DIR@"
