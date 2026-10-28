@@ -242,12 +242,17 @@ glm::mat4 toGlm(const aiMatrix4x4& m) {
     return glm::transpose(glm::make_mat4(&m.a1));
 }
 
+// Pesos do arquivo já levados para os nossos ossos (um mapa por vértice).
+using BoneWeights = std::vector<std::map<int, float>>;
+
 // Junta todas as malhas aplicando as transformações da hierarquia de nós.
 void collectMeshes(const aiScene* sc, const aiNode* node, const glm::mat4& parentXf, bool fixSkinnedAxes,
-                   std::vector<Vertex>& verts, std::vector<unsigned>& idx, std::vector<int>& triMat) {
+                   std::vector<Vertex>& verts, std::vector<unsigned>& idx, std::vector<int>& triMat,
+                   const CharacterModel::LoadOptions& opt, BoneWeights& weights) {
     const glm::mat4 nodeXf = parentXf * toGlm(node->mTransformation);
     for (unsigned k = 0; k < node->mNumMeshes; ++k) {
         const aiMesh* m = sc->mMeshes[node->mMeshes[k]];
+        if (!opt.skipMesh.empty() && std::string(m->mName.C_Str()).find(opt.skipMesh) != std::string::npos) continue;
         // Alguns exports do Sketchfab deixam a malha com skin girada 90° no eixo X
         // em relação ao resto do modelo.
         glm::mat4 xf = nodeXf;
@@ -267,6 +272,17 @@ void collectMeshes(const aiScene* sc, const aiNode* node, const glm::mat4& paren
             }
             verts.push_back(v);
         }
+        if (opt.boneMap) {
+            weights.resize(verts.size());
+            for (unsigned b = 0; b < m->mNumBones; ++b) {
+                const aiBone* bone = m->mBones[b];
+                int ours = opt.boneMap(bone->mName.C_Str());
+                if (opt.joints) // junta = origem do osso na pose do arquivo
+                    (*opt.joints)[bone->mName.C_Str()] = glm::vec3(xf * glm::inverse(toGlm(bone->mOffsetMatrix)) * glm::vec4(0, 0, 0, 1));
+                for (unsigned w = 0; w < bone->mNumWeights; ++w)
+                    weights[base + bone->mWeights[w].mVertexId][ours] += bone->mWeights[w].mWeight;
+            }
+        }
         for (unsigned f = 0; f < m->mNumFaces; ++f)
             if (m->mFaces[f].mNumIndices == 3) {
                 for (int e = 0; e < 3; ++e) idx.push_back(base + m->mFaces[f].mIndices[e]);
@@ -274,7 +290,7 @@ void collectMeshes(const aiScene* sc, const aiNode* node, const glm::mat4& paren
             }
     }
     for (unsigned c = 0; c < node->mNumChildren; ++c)
-        collectMeshes(sc, node->mChildren[c], nodeXf, fixSkinnedAxes, verts, idx, triMat);
+        collectMeshes(sc, node->mChildren[c], nodeXf, fixSkinnedAxes, verts, idx, triMat, opt, weights);
 }
 
 unsigned char linearToSrgb8(float v) {
@@ -329,18 +345,39 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
     std::vector<Vertex> verts;
     std::vector<unsigned> idx;
     std::vector<int> triMat; // material de cada triângulo
-    collectMeshes(sc, sc->mRootNode, glm::mat4(1.0f), opt.fixSkinnedAxes, verts, idx, triMat);
+    BoneWeights weights;
+    collectMeshes(sc, sc->mRootNode, glm::mat4(1.0f), opt.fixSkinnedAxes, verts, idx, triMat, opt, weights);
 
-    if (opt.groundAtZero) { // apoia os pés em y = 0
-        float minY = 1e9f;
-        for (const Vertex& v : verts) minY = std::min(minY, v.pos[1]);
-        for (Vertex& v : verts) v.pos[1] -= minY;
+    float minY = 1e9f, maxY = -1e9f;
+    for (const Vertex& v : verts) { minY = std::min(minY, v.pos[1]); maxY = std::max(maxY, v.pos[1]); }
+    const float scale = opt.targetHeight > 0.0f && maxY > minY ? opt.targetHeight / (maxY - minY) : 1.0f;
+    const float shift = opt.groundAtZero ? minY : 0.0f; // apoia os pés em y = 0
+    auto place = [&](glm::vec3 p) { p.y -= shift; return p * scale; };
+    for (Vertex& v : verts) {
+        glm::vec3 p = place(glm::vec3(v.pos[0], v.pos[1], v.pos[2]));
+        v.pos[0] = p.x; v.pos[1] = p.y; v.pos[2] = p.z;
     }
+    if (opt.joints)
+        for (auto& [name, p] : *opt.joints) p = place(p);
     std::printf("[modelo] %zu vertices, %zu triangulos\n", verts.size(), idx.size() / 3);
 
     computeTangents(verts, idx);
     if (sk) {
         rigidRig(*sk, verts, idx);
+    } else if (opt.boneMap) { // os 4 maiores pesos de cada vértice
+        weights.resize(verts.size());
+        for (size_t i = 0; i < verts.size(); ++i) {
+            std::vector<std::pair<float, int>> w;
+            for (auto& [b, x] : weights[i]) w.push_back({x, b});
+            std::sort(w.rbegin(), w.rend());
+            float sum = 0.0f;
+            for (size_t k = 0; k < 4 && k < w.size(); ++k) sum += w[k].first;
+            for (int k = 0; k < 4; ++k) {
+                bool has = k < (int)w.size() && sum > 0.0f;
+                verts[i].bones[k] = has ? (uint8_t)w[k].second : 0;
+                verts[i].weights[k] = has ? w[k].first / sum : (k == 0 && sum <= 0.0f ? 1.0f : 0.0f);
+            }
+        }
     } else { // objeto rígido: tudo no "osso" 0
         for (Vertex& v : verts) {
             v.bones[0] = v.bones[1] = v.bones[2] = v.bones[3] = 0;

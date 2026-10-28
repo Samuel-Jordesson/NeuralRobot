@@ -7,6 +7,7 @@ struct Box {
     glm::vec3 min, max;
     glm::vec3 color;
     bool hidden = false; // só colisão (a malha de um objeto é desenhada no lugar)
+    bool solid = true;   // false: só barra raios (tiros, visão, câmera), não o corpo (ex.: porta)
 };
 
 struct Ball {

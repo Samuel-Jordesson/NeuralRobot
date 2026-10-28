@@ -1,4 +1,6 @@
 #include "menu.h"
+#include "builder.h"
+#include "gun_tuning.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -231,6 +233,15 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
     ImGui::PopStyleColor(2);
     ImGui::SameLine();
     if (ImGui::Button("Sair do jogo", ImVec2(bw, 40 * g_scale))) action = Action::Quit;
+#if GA_EDITOR
+    if (ImGui::Button("Editar arma", ImVec2(bw, 40 * g_scale))) action = Action::EditGuns;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(builder::state() == builder::State::Running);
+    if (ImGui::Button("Compilar", ImVec2(bw, 40 * g_scale))) action = Action::Compile;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Gera a versão final em build-final/ga, sem o editor e sem este botão");
+    ImGui::EndDisabled();
+#endif
     ImGui::Dummy(ImVec2(0, 4 * g_scale));
 
     bool quality = false; // mexeu em algo de qualidade -> preset vira "Personalizado"
@@ -268,6 +279,10 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
             any |= sliderF("Campo de visão", "##fov", &gs.fov, 50.0f, 90.0f, "%.0f°");
             any |= checkbox("Sincronização vertical", "##vsync", &gs.vsync, "Trava no Hz do monitor, evita cortes na imagem");
             any |= checkbox("Mostrar FPS", "##fps", &gs.showFps);
+#if GA_EDITOR
+            any |= checkbox("Jogador imortal", "##immortal", &gs.immortal,
+                            "Só para testar: os tiros não tiram vida. Não existe na versão final compilada.");
+#endif
 
             section("Sombras");
             static const int resVals[] = {1024, 2048, 4096};
@@ -364,6 +379,201 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
     }
     ImGui::End();
     return action;
+}
+
+void drawCombatHud(const CombatHud& h) {
+    ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y, sc = g_scale;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    // levou tiro: bordas da tela ficam vermelhas (mais forte com pouca vida)
+    float red = std::clamp(h.hurtFlash * 0.55f + (1.0f - h.health / 100.0f) * 0.35f, 0.0f, 0.8f);
+    if (h.dead) red = 0.6f;
+    if (red > 0.01f) {
+        ImU32 c0 = IM_COL32(140, 0, 0, (int)(red * 255)), c1 = IM_COL32(140, 0, 0, 0);
+        float e = std::min(W, H) * 0.22f;
+        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, e), c0, c0, c1, c1);
+        dl->AddRectFilledMultiColor(ImVec2(0, H - e), ImVec2(W, H), c1, c1, c0, c0);
+        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(e, H), c0, c1, c1, c0);
+        dl->AddRectFilledMultiColor(ImVec2(W - e, 0), ImVec2(W, H), c1, c0, c0, c1);
+    }
+    // marcador de acerto em X no centro (vermelho quando mata)
+    if (h.hitMarker > 0.01f) {
+        ImU32 c = h.hitKill ? IM_COL32(255, 60, 50, (int)(h.hitMarker * 255)) : IM_COL32(255, 255, 255, (int)(h.hitMarker * 255));
+        ImVec2 m(W * 0.5f, H * 0.5f);
+        float a = 7 * sc, b = 15 * sc;
+        for (int sx = -1; sx <= 1; sx += 2)
+            for (int sy = -1; sy <= 1; sy += 2)
+                dl->AddLine(ImVec2(m.x + sx * a, m.y + sy * a), ImVec2(m.x + sx * b, m.y + sy * b), c, 2.5f * sc);
+    }
+    // vida (canto inferior esquerdo)
+    ImVec2 p0(24 * sc, H - 44 * sc);
+    float bw = 260 * sc, bh = 14 * sc;
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p0.x + bw + 2, p0.y + bh + 2), IM_COL32(0, 0, 0, 140), 3 * sc);
+    float f = std::clamp(h.health / 100.0f, 0.0f, 1.0f);
+    ImU32 hc = f > 0.5f ? IM_COL32(235, 235, 230, 230) : f > 0.25f ? IM_COL32(245, 170, 60, 235) : IM_COL32(235, 60, 50, 240);
+    if (f > 0.0f) dl->AddRectFilled(p0, ImVec2(p0.x + bw * f, p0.y + bh), hc, 2 * sc);
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%d", (int)std::ceil(h.health));
+    ImGui::PushFont(g_section);
+    dl->AddText(ImVec2(p0.x, p0.y - 26 * sc), IM_COL32(255, 255, 255, 230), "VIDA");
+    dl->AddText(ImVec2(p0.x + bw - ImGui::CalcTextSize(buf).x, p0.y - 26 * sc), IM_COL32(255, 255, 255, 230), buf);
+    // inimigos (canto superior esquerdo), só perto/dentro da arena
+    if (h.inArena && !h.dead) {
+        std::snprintf(buf, sizeof(buf), "ONDA %d   INIMIGOS %d/%d   ABATES %d", h.wave, h.alive, h.total, h.kills);
+        dl->AddText(ImVec2(24 * sc, 20 * sc), IM_COL32(255, 255, 255, 220), buf);
+    }
+    ImGui::PopFont();
+    auto banner = [&](const char* big, const char* small, ImU32 col) {
+        ImGui::PushFont(g_title);
+        ImVec2 ts = ImGui::CalcTextSize(big);
+        dl->AddText(ImVec2((W - ts.x) * 0.5f + 2, H * 0.3f + 2), IM_COL32(0, 0, 0, 160), big);
+        dl->AddText(ImVec2((W - ts.x) * 0.5f, H * 0.3f), col, big);
+        ImGui::PopFont();
+        ImVec2 ss = ImGui::CalcTextSize(small);
+        dl->AddText(ImVec2((W - ss.x) * 0.5f, H * 0.3f + ts.y + 8 * sc), IM_COL32(255, 255, 255, 220), small);
+    };
+    if (!h.dead && (h.coverHint || h.inCover)) { // dica de tecla embaixo da mira
+        const char* tip = h.inCover ? "Q  sair da cobertura" : "Q  cobertura";
+        ImVec2 ts = ImGui::CalcTextSize(tip);
+        ImVec2 p((W - ts.x) * 0.5f, H * 0.62f);
+        dl->AddRectFilled(ImVec2(p.x - 10 * sc, p.y - 5 * sc), ImVec2(p.x + ts.x + 10 * sc, p.y + ts.y + 5 * sc),
+                          IM_COL32(0, 0, 0, 120), 4 * sc);
+        dl->AddText(p, IM_COL32(255, 255, 255, h.inCover ? 150 : 230), tip);
+    }
+    if (h.dead) banner("VOCÊ MORREU", "Voltando ao início...", IM_COL32(235, 60, 50, 255));
+    else if (h.nextWave >= 0.0f && h.inArena) {
+        std::snprintf(buf, sizeof(buf), "Próxima onda em %d s", (int)std::ceil(h.nextWave));
+        banner("ARENA LIMPA", buf, IM_COL32(kAccent.x * 255, kAccent.y * 255, kAccent.z * 255, 255));
+    }
+}
+
+EditorAction drawGunEditor(GunEditor& ed, const char* const* gunNames, const bool* gunIsRifle, int gunCount,
+                           float& panelFrac) {
+    EditorAction action = EditorAction::None;
+    ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    float panelW = std::min(W * 0.5f, 560.0f * g_scale);
+    panelFrac = panelW / std::max(W, 1.0f);
+    ImGui::SetNextWindowPos(ImVec2(W - panelW, 0));
+    ImGui::SetNextWindowSize(ImVec2(panelW, H));
+    ImGui::Begin("##guneditor", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+
+    ImGui::PushFont(g_title);
+    ImGui::TextUnformatted("EDITAR ARMA");
+    ImGui::PopFont();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("Arraste com o mouse no personagem para girar a câmera; roda do mouse aproxima.");
+    ImGui::PopStyleColor();
+
+    section("Arma");
+    float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * (gunCount - 1)) / gunCount;
+    for (int i = 0; i < gunCount; ++i) {
+        if (i) ImGui::SameLine();
+        bool sel = ed.gun == i;
+        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.85f));
+        if (ImGui::Button(gunNames[i], ImVec2(bw, 38 * g_scale))) ed.gun = i;
+        if (sel) ImGui::PopStyleColor();
+    }
+    const bool rifle = gunIsRifle[ed.gun];
+
+    section("Modo");
+    const char* modes[] = {"Mirando", "Segurando", rifle ? "Nas costas" : "Na cintura"};
+    float mw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
+    for (int i = 0; i < 3; ++i) {
+        if (i) ImGui::SameLine();
+        bool sel = ed.mode == i;
+        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.85f));
+        if (ImGui::Button(modes[i], ImVec2(mw, 34 * g_scale))) ed.mode = i;
+        if (sel) ImGui::PopStyleColor();
+    }
+    if (ed.mode == 2 && rifle) {
+        const char* slots[] = {"Costas (embaixo)", "Costas (em cima)"};
+        int si = ed.slot - 1;
+        if (combo("Lugar", "##slot", &si, slots, 2, "Os dois fuzis ficam cruzados nas costas; cada lugar tem seu ajuste"))
+            ed.slot = si + 1;
+    }
+    const char* anims[] = {"Parado", "Andando", "Correndo"};
+    combo("Animação", "##anim", &ed.anim, anims, 3);
+
+    GunDef dummy;
+    dummy.name = gunNames[ed.gun];
+    GunTuning& t = gunTuning(dummy);
+    GunOffset& o = ed.mode == 0 ? t.aim : ed.mode == 1 ? t.carry : t.body[rifle ? ed.slot : 0];
+
+    section("Posição (cm)");
+    bool ch = false;
+    ch |= sliderF("Frente / trás", "##mx", &o.move.x, -40.0f, 40.0f, "%.1f", "Para onde o cano aponta");
+    ch |= sliderF("Cima / baixo", "##my", &o.move.y, -40.0f, 40.0f, "%.1f");
+    ch |= sliderF("Direita / esquerda", "##mz", &o.move.z, -40.0f, 40.0f, "%.1f");
+    section("Rotação (graus)");
+    ch |= sliderF("Rolar", "##rx", &o.turn.x, -180.0f, 180.0f, "%.1f°", "Gira em volta do cano");
+    ch |= sliderF("Virar", "##ry", &o.turn.y, -180.0f, 180.0f, "%.1f°", "Cano para a esquerda / direita");
+    ch |= sliderF("Inclinar", "##rz", &o.turn.z, -180.0f, 180.0f, "%.1f°", "Cano para cima / baixo");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("Ctrl + clique num controle para digitar o valor.");
+    ImGui::PopStyleColor();
+    if (ImGui::Button("Zerar este modo", ImVec2(-1, 32 * g_scale))) { o = GunOffset(); ch = true; }
+    if (ch) { ed.dirty = true; ed.status.clear(); }
+
+    // rodapé: aplicar / desfazer / voltar / compilar
+    float footer = 3 * 44.0f * g_scale + 40.0f * g_scale;
+    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), H - footer));
+    ImGui::Separator();
+    if (ed.dirty) ImGui::TextColored(kAccent, "Mudanças não aplicadas");
+    else ImGui::TextDisabled("%s", ed.status.empty() ? "Tudo aplicado" : ed.status.c_str());
+    float hw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.05f, 0.04f, 1.0f));
+    if (ImGui::Button("Aplicar", ImVec2(hw, 38 * g_scale))) action = EditorAction::Apply;
+    ImGui::PopStyleColor(2);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!ed.dirty);
+    if (ImGui::Button("Desfazer mudanças", ImVec2(hw, 38 * g_scale))) action = EditorAction::Revert;
+    ImGui::EndDisabled();
+    if (ImGui::Button("Voltar ao menu", ImVec2(hw, 38 * g_scale))) action = EditorAction::Close;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(builder::state() == builder::State::Running);
+    if (ImGui::Button("Compilar", ImVec2(hw, 38 * g_scale))) action = EditorAction::Compile;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Aplica e gera a versão final em build-final/ga, sem o editor e sem este botão");
+    ImGui::EndDisabled();
+    ImGui::End();
+    return action;
+}
+
+void drawBuildStatus() {
+    builder::State st = builder::state();
+    if (st == builder::State::Idle) return;
+    static bool hidden = false;
+    static builder::State last = builder::State::Idle;
+    if (st != last) { hidden = false; last = st; }
+    if (hidden) return;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(12 * g_scale, io.DisplaySize.y - 12 * g_scale), ImGuiCond_Always, ImVec2(0, 1));
+    ImGui::SetNextWindowSize(ImVec2(std::min(io.DisplaySize.x * 0.45f, 620 * g_scale), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * g_scale, 10 * g_scale));
+    ImGui::Begin("##build", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_AlwaysAutoResize);
+    if (st == builder::State::Running) {
+        const char* dots[] = {"", ".", "..", "..."};
+        ImGui::TextColored(kAccent, "Compilando a versão final%s", dots[(int)(ImGui::GetTime() * 3) % 4]);
+    } else if (st == builder::State::Ok) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1), "Versão final pronta:");
+        ImGui::TextWrapped("%s", builder::outputPath().c_str());
+    } else {
+        ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.3f, 1), "A compilação falhou");
+    }
+    if (ImGui::TreeNode("Saída do cmake")) {
+        std::string lg = builder::log();
+        ImGui::BeginChild("buildlog", ImVec2(0, 200 * g_scale), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::TextUnformatted(lg.c_str());
+        if (st == builder::State::Running) ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+        ImGui::TreePop();
+    }
+    if (st != builder::State::Running && ImGui::SmallButton("Fechar")) hidden = true;
+    ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 } // namespace menu

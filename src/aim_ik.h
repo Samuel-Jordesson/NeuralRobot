@@ -15,7 +15,9 @@ glm::mat4 handForGun(const glm::mat4& gun, const GunDef& d);
 
 // Arma guardada no corpo: slot 0 = cintura direita (cano para baixo), 1 = costas com a
 // empunhadura embaixo à direita, 2 = costas com a empunhadura em cima à direita (cruzadas em X).
+// Com o ajuste do editor (gun_tuning); slotBase = sem ajuste.
 glm::mat4 slotMatrix(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], int slot, const GunDef& d);
+glm::mat4 slotBase(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], int slot, const GunDef& d);
 // Fuzil "em pé" na frente do ombro direito (passagem entre as costas e a frente ao sacar/guardar).
 glm::mat4 rifleShoulderMatrix(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], int slot, const GunDef& d);
 
@@ -50,3 +52,12 @@ struct HandReach {
     float support = 0.0f;    // peso da mão esquerda no guarda-mão (fuzil)
 };
 void applyHandReach(const Skeleton& sk, Pose& pose, const HandReach& r);
+
+// Mão espalmada numa superfície (ex.: empurrando a porta), dedos para cima.
+// point/normal no espaço do modelo; a normal aponta da superfície para o personagem.
+void applyPalmOnSurface(const Skeleton& sk, Pose& pose, bool right, const glm::vec3& point, const glm::vec3& normal,
+                        float weight);
+// Agachado: quadril desce 'amount' metros com os pés no lugar; 'lean' inclina o tronco.
+void applyCrouch(const Skeleton& sk, Pose& pose, float amount, float lean);
+// Tronco de lado, ombro esquerdo na frente (empurrando com o ombro), com o peso 0..1.
+void applyShoulderPush(Pose& pose, float weight);

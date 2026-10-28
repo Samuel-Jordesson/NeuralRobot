@@ -1,5 +1,6 @@
 # Build (CMake)
 build/
+build-final/
 cmake-build-*/
 
 # Compiladores/IDE

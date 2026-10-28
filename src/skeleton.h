@@ -18,6 +18,13 @@ enum Bone {
 // Ossos do corpo (os que vêm da captura de movimento); os dedos ficam depois.
 constexpr int kBodyBones = FOOT_R + 1;
 
+// Juntas de um rig de verdade (já na escala e posição do modelo), [0] = esquerda, [1] = direita.
+struct RigJoints {
+    glm::vec3 pelvis, spine, chest, neck, head, headTop;
+    glm::vec3 clavicle[2], shoulder[2], elbow[2], wrist[2], knuckles[2];
+    glm::vec3 hip[2], knee[2], ankle[2], toe[2];
+};
+
 struct Skeleton {
     int parent[BONE_COUNT];
     const char* name[BONE_COUNT];
@@ -42,6 +49,8 @@ struct Skeleton {
     glm::vec3 curlAxis[2], thumbAxis[2];
 
     static Skeleton makeCrashDummy();
+    // Esqueleto do mesmo formato encaixado num modelo com rig próprio (ex.: o soldado).
+    static Skeleton makeFromRig(const RigJoints& r);
 };
 
 struct Pose {

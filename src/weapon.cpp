@@ -18,14 +18,16 @@ float Weapon::rnd() {
     return (rng_ & 0xFFFFFF) / float(0xFFFFFF);
 }
 
-void Weapon::fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const glm::vec3& target) {
+void Weapon::fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const glm::vec3& target, bool hitsBody) {
     const glm::vec3 muzzle = glm::vec3(gunWorld * glm::vec4(def.muzzle, 1.0f));
     glm::vec3 dir = target - muzzle;
     if (glm::length(dir) < 1e-3f) dir = glm::vec3(gunWorld * glm::vec4(-1, 0, 0, 0));
     dir = glm::normalize(dir);
 
     World::RayHit h = w.raycastHit(muzzle, dir, 300.0f);
-    float dist = h.hit ? h.t : 300.0f;
+    const float bodyDist = glm::length(target - muzzle);
+    const bool body = hitsBody && (!h.hit || h.t > bodyDist - 0.05f);
+    float dist = body ? bodyDist : h.hit ? h.t : 300.0f;
     tracers.push_back({muzzle, dir, dist, 0.0f});
 
     cooldown = def.fireInterval;
@@ -52,6 +54,16 @@ void Weapon::fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const 
     shells.push_back(s);
     if (shells.size() > kMaxShells) shells.erase(shells.begin());
 
+    if (body) {
+        // acertou alguém: borrifo de sangue saindo pelos dois lados
+        for (int i = 0; i < 10; ++i) {
+            glm::vec3 r(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f);
+            glm::vec3 v = (i % 3 == 0 ? -dir : dir) * (0.6f + 1.4f * rnd()) + r * 1.2f;
+            particles.push_back({target, v, glm::vec3(0.32f, 0.02f, 0.02f), 0.0f, 0.25f + 0.35f * rnd(),
+                                 0.025f + 0.03f * rnd(), true});
+        }
+        return;
+    }
     if (!h.hit) return;
     glm::vec3 p = muzzle + dir * h.t;
     glm::vec3 n = h.normal;

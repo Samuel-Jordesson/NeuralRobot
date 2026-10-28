@@ -548,8 +548,11 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
     sh.set("uClouds", gs_.clouds ? 1 : 0);
     sh.set("uCloudCoverage", gs_.cloudCoverage);
     sh.set("uCloudShadows", gs_.cloudShadows ? 1 : 0);
-    bool flash = s.weapon && s.weapon->flashTime > 0.0f;
-    sh.set("uFlashPos", flash ? s.weapon->flashPos : glm::vec3(0.0f, -1000.0f, 0.0f));
+    const Weapon* fw = s.weapon && s.weapon->flashTime > 0.0f                 ? s.weapon
+                       : s.enemyWeapon && s.enemyWeapon->flashTime > 0.0f ? s.enemyWeapon
+                                                                           : nullptr;
+    bool flash = fw != nullptr;
+    sh.set("uFlashPos", flash ? fw->flashPos : glm::vec3(0.0f, -1000.0f, 0.0f));
     sh.set("uFlashColor", flash ? glm::vec3(9.0f, 6.0f, 2.8f) : glm::vec3(0.0f));
     // névoa de altura
     sh.set("uFogDensity", 0.0022f * gs_.fogDensity);
@@ -581,15 +584,26 @@ void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
         if (color) { sh.set("uMaterial", 2); sh.set("uColor", b.color); }
         sphere_.draw();
     }
-    if (s.weapon && color) {
+    for (const RenderScene::Panel& p : s.panels) {
+        sh.set("uModel", p.model);
+        if (color) {
+            sh.set("uMaterial", p.material);
+            sh.set("uColor", p.color);
+        }
+        cube_.draw();
+    }
+    if (color) {
         // cápsulas de latão (pequenas demais para fazer sombra)
         sh.set("uMaterial", 3);
         sh.set("uColor", glm::vec3(0.95f, 0.72f, 0.33f));
-        for (const Shell& sh2 : s.weapon->shells) {
-            glm::mat4 m = glm::translate(glm::mat4(1.0f), sh2.pos) * glm::mat4_cast(sh2.rot) *
-                          glm::scale(glm::mat4(1.0f), glm::vec3(0.022f, 0.009f, 0.009f) * sh2.scale);
-            sh.set("uModel", m);
-            cube_.draw();
+        for (const Weapon* w : {s.weapon, s.enemyWeapon}) {
+            if (!w) continue;
+            for (const Shell& sh2 : w->shells) {
+                glm::mat4 m = glm::translate(glm::mat4(1.0f), sh2.pos) * glm::mat4_cast(sh2.rot) *
+                              glm::scale(glm::mat4(1.0f), glm::vec3(0.022f, 0.009f, 0.009f) * sh2.scale);
+                sh.set("uModel", m);
+                cube_.draw();
+            }
         }
     }
 }
@@ -647,6 +661,7 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
     if (color) skinSh.set("uDebug", s.debugWeights ? 1 : 0);
     drawSkinned(skinSh, *s.character, s.characterModel, s.bones, color);
     if (color) skinSh.set("uDebug", 0);
+    for (const RenderScene::Actor& a : s.actors) drawSkinned(skinSh, *a.mesh, a.model, a.bones, color);
     for (const RenderScene::Prop& g : s.guns) drawSkinned(skinSh, *g.mesh, g.model, identityBones_, color);
 }
 
@@ -659,8 +674,11 @@ void Renderer::drawFx(const std::vector<FxVertex>& v) {
 }
 
 void Renderer::drawEffects(const RenderScene& s) {
-    if (!s.weapon) return;
-    const Weapon& w = *s.weapon;
+    if (s.weapon) drawWeaponFx(s, *s.weapon);
+    if (s.enemyWeapon) drawWeaponFx(s, *s.enemyWeapon);
+}
+
+void Renderer::drawWeaponFx(const RenderScene& s, const Weapon& w) {
     const glm::mat4 vp = s.proj * s.view;
     glm::mat4 inv = glm::inverse(s.view);
     glm::vec3 camRight(inv[0]), camUp(inv[1]);

@@ -1,0 +1,3 @@
+#pragma once
+// Gerado pelo CMake a partir de weapons.ini (versão final, sem editor).
+static const char* kBakedWeapons = R"GAINI(@GA_WEAPONS_INI@)GAINI";

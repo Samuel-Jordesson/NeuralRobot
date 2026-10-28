@@ -15,6 +15,19 @@ find_package(assimp REQUIRED)
 # Caminho raiz do projeto (shaders e assets), gerado num header para lidar com espaços no caminho
 configure_file(src/config.h.in ${CMAKE_BINARY_DIR}/generated/config.h)
 
+# GA_EDITOR=ON: jogo com o editor de armas e o botão de compilar (desenvolvimento).
+# GA_EDITOR=OFF: versão final; os ajustes de weapons.ini vão embutidos no executável.
+option(GA_EDITOR "Editor de armas e botao de compilar" ON)
+if(NOT GA_EDITOR)
+  set(GA_WEAPONS_INI "")
+  if(EXISTS ${CMAKE_SOURCE_DIR}/weapons.ini)
+    file(READ ${CMAKE_SOURCE_DIR}/weapons.ini GA_WEAPONS_INI)
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/weapons.ini)
+  configure_file(src/weapons_baked.h.in ${CMAKE_BINARY_DIR}/generated/weapons_baked.h @ONLY)
+endif()
+find_package(Threads REQUIRED)
+
 add_executable(ga
   src/main.cpp
   src/gl_util.cpp
@@ -26,6 +39,12 @@ add_executable(ga
   src/weapon.cpp
   src/table.cpp
   src/guns.cpp
+  src/gun_tuning.cpp
+  src/arena.cpp
+  src/cover.cpp
+  src/ragdoll.cpp
+  src/soldiers.cpp
+  src/builder.cpp
   src/loadout.cpp
   src/gun_handling.cpp
   src/character_model.cpp
@@ -42,5 +61,6 @@ add_executable(ga
 )
 
 target_include_directories(ga PRIVATE src third_party third_party/imgui ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(ga PRIVATE glfw GLEW::GLEW OpenGL::GL assimp::assimp)
+target_link_libraries(ga PRIVATE glfw GLEW::GLEW OpenGL::GL assimp::assimp Threads::Threads)
+target_compile_definitions(ga PRIVATE GA_EDITOR=$<BOOL:${GA_EDITOR}>)
 target_compile_options(ga PRIVATE -Wall -Wno-unused-function -Wno-missing-field-initializers)

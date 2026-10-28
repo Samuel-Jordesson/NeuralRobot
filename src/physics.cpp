@@ -225,6 +225,7 @@ void CharacterBody::resolve(World& w, bool wasGrounded) {
     // Subir degraus: se encostar numa caixa baixa, sobe direto para o topo.
     if (wasGrounded && vel.y <= 0.5f) {
         for (const Box& b : w.boxes) {
+            if (!b.solid) continue;
             float rise = b.max.y - pos.y;
             if (rise <= 0.001f || rise > kStepHeight) continue;
             float rd = rectDist(b, pos.x, pos.z);
@@ -248,6 +249,7 @@ void CharacterBody::resolve(World& w, bool wasGrounded) {
     for (int iter = 0; iter < 4; ++iter) {
         bool any = false;
         for (const Box& b : w.boxes) {
+            if (!b.solid) continue;
             glm::vec3 push;
             if (!capsuleVsBox(pos, radius, height, b, push)) continue;
             any = true;
@@ -293,6 +295,7 @@ void stepBalls(World& w, CharacterBody& ch, float dt) {
             onGround = true;
         }
         for (const Box& box : w.boxes) {
+            if (!box.solid) continue;
             glm::vec3 n;
             float pen;
             if (!sphereVsBox(b.pos, b.radius, box, n, pen)) continue;

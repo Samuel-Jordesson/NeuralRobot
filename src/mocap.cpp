@@ -210,3 +210,21 @@ bool loadMixamoClip(const std::string& path, const Skeleton& sk, MocapClip& out)
                 out.naturalSpeed());
     return true;
 }
+
+float clipMeanYaw(const MocapClip& c) {
+    glm::vec2 sum(0.0f);
+    for (const Pose& p : c.frames) {
+        // peito (costas na parede): quadril * coluna * peito, todos neutros = identidade
+        glm::vec3 f = p.rot[HIPS] * p.rot[SPINE] * p.rot[CHEST] * glm::vec3(0, 0, 1);
+        sum += glm::normalize(glm::vec2(f.x, f.z) + glm::vec2(1e-6f));
+    }
+    return std::atan2(sum.x, sum.y);
+}
+
+void removeClipYaw(MocapClip& c) {
+    glm::quat q = glm::angleAxis(-clipMeanYaw(c), glm::vec3(0, 1, 0));
+    for (Pose& p : c.frames) {
+        p.rot[HIPS] = glm::normalize(q * p.rot[HIPS]);
+        p.rootOffset = q * p.rootOffset;
+    }
+}

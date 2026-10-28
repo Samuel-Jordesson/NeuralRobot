@@ -51,6 +51,7 @@ void forEachField(GraphicsSettings& s, F&& f) {
     f("msaa", &s.msaa);
     f("fxaa", &s.fxaa);
     f("showFps", &s.showFps);
+    f("immortal", &s.immortal);
     f("shadowRes", &s.shadowRes);
     f("shadowCascades", &s.shadowCascades);
     f("shadowDistance", &s.shadowDistance);

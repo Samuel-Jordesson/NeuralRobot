@@ -18,3 +18,7 @@ struct MocapClip {
 };
 
 bool loadMixamoClip(const std::string& path, const Skeleton& sk, MocapClip& out);
+// Giro médio do peito no clipe (rad, 0 = olhando para +Z).
+float clipMeanYaw(const MocapClip& c);
+// Tira esse giro: o corpo do clipe fica de frente para +Z (ex.: de costas para a parede na cobertura).
+void removeClipYaw(MocapClip& c);

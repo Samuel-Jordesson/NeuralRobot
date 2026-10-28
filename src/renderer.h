@@ -26,9 +26,26 @@ struct RenderScene {
     };
     std::vector<Prop> props;
 
-    // armas (na mão, no corpo e no mundo) e efeitos de tiro
+    // armas (na mão, no corpo e no mundo) e efeitos de tiro (do jogador e dos inimigos)
     std::vector<Prop> guns;
     const Weapon* weapon = nullptr;
+    const Weapon* enemyWeapon = nullptr;
+
+    // outros personagens animados (soldados)
+    struct Actor {
+        const CharacterModel* mesh;
+        glm::mat4 model;
+        const glm::mat4* bones; // BONE_COUNT matrizes de skinning
+    };
+    std::vector<Actor> actors;
+
+    // peças de cenário que giram (porta): cubo unitário centrado -> mundo
+    struct Panel {
+        glm::mat4 model;
+        glm::vec3 color;
+        int material; // 3 = metal liso, 4 = madeira
+    };
+    std::vector<Panel> panels;
 
     // HUD
     float crosshairAlpha = 0.0f;
@@ -64,6 +81,7 @@ private:
     void drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4& model, const glm::mat4* bones, bool material);
     void drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, Pass pass, const glm::mat4& vp);
     void drawEffects(const RenderScene& s);
+    void drawWeaponFx(const RenderScene& s, const Weapon& w);
     void drawHud(const RenderScene& s);
     void drawFx(const std::vector<FxVertex>& v);
     void fullscreen();

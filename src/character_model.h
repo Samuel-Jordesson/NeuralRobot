@@ -3,6 +3,8 @@
 #include "skeleton.h"
 
 #include <glm/gtc/type_ptr.hpp>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -14,8 +16,16 @@ public:
         bool groundAtZero = true;    // desloca para o ponto mais baixo ficar em y = 0
         bool fixSkinnedAxes = false; // corrige malhas com skin giradas (export do Sketchfab)
         int maxTextureSize = 0;      // > 0: reduz texturas maiores que isso (economiza memória)
+        float targetHeight = 0.0f;   // > 0: escala o modelo para ter essa altura (m)
+        // Modelo com rig próprio: usa os pesos do arquivo, levando cada osso dele para um dos
+        // nossos (retorna o Bone). Em 'joints' ficam as posições das juntas do arquivo, já na
+        // escala e posição finais do modelo.
+        std::function<int(const std::string&)> boneMap;
+        std::map<std::string, glm::vec3>* joints = nullptr;
+        std::string skipMesh; // malhas cujo nome contém isso ficam de fora (ex.: base de exibição)
     };
-    // sk == nullptr: objeto rígido (ex.: a arma), desenhado com uBones[0] = identidade.
+    // sk == nullptr: objeto rígido (ex.: a arma), desenhado com uBones[0] = identidade,
+    // ou modelo com rig próprio (opt.boneMap).
     bool load(const std::string& path, const Skeleton* sk, const LoadOptions& opt);
     void draw() const;
     void drawPart(size_t i) const;

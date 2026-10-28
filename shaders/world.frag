@@ -6,7 +6,7 @@ in vec3 vNormal;
 in vec3 vLocal;
 out vec4 FragColor;
 
-uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas)
+uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta)
 uniform vec3 uColor;
 uniform vec3 uBoxMin, uBoxMax; // limites do bloco (desgaste nas quinas)
 
@@ -42,6 +42,13 @@ void main() {
         albedo = uColor;
         rough = 0.3;
         metal = 1.0;
+    } else if (uMaterial == 4) {
+        // madeira pintada gasta: veios ao longo da altura da peça (coordenadas locais do cubo)
+        vec2 p = vec2(vLocal.x * 3.0 + vLocal.z * 3.0, vLocal.y * 0.4);
+        float grain = texture(uNoise, vec2(p.x * 0.9, p.y * 0.08)).r;
+        float fine = texture(uNoise, vLocal.xy * (19.0 / 8.0) + vLocal.zy).b;
+        albedo = uColor * (0.72 + 0.4 * grain) * (0.92 + 0.12 * fine);
+        rough = 0.7 + 0.15 * fine;
     } else if (uMaterial == 0) {
         // concreto em placas de 4 m
         vec2 p = vPos.xz;

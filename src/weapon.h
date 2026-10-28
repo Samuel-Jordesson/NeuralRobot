@@ -36,7 +36,8 @@ class Weapon {
 public:
     bool ready() const { return cooldown <= 0.0f; }
     // Tiro hitscan da boca do cano até 'target' (ponto sob a mira). gunWorld = espaço canônico -> mundo.
-    void fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const glm::vec3& target);
+    // hitsBody: 'target' está num personagem -> a bala para lá (sangue em vez de faísca).
+    void fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const glm::vec3& target, bool hitsBody = false);
     void update(const World& w, float dt);
 
     float cooldown = 0.0f;

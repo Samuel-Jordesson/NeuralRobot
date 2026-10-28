@@ -19,11 +19,15 @@ Dependências (Ubuntu): `libglfw3-dev libglew-dev libglm-dev libassimp-dev`.
 | Botão direito | mirar (zoom no ombro + mira de ponto) |
 | Botão esquerdo | atirar |
 | G | soltar a arma |
+| Q | cobertura: gruda na caixa/parede à frente (Q de novo ou puxar para trás sai); A/D anda colado; botão direito atira dela (baixa: levanta por cima; alta: espia pela quina) |
 | Mouse / Scroll | girar câmera / zoom |
 | F1 | ver pesos do rig |
 | F2 | liga/desliga Foot IK |
 | R | voltar ao início |
 | Esc | menu de pausa com as opções gráficas |
+
+## Arena
+Em frente ao início (siga reto para +Z) fica uma arena murada de 26 x 26 m. A porta de madeira abre sozinha quando alguém chega perto, sempre para o lado oposto de quem vem, e fechada bloqueia passagem e tiros. Lá dentro há 5 soldados (`russian_soldier.glb`) com AK-47: quando te veem, avançam, andam de lado e atiram em rajadas. Os soldados correm para trás de coberturas baixas que os escondam de você, agacham e alternam entre esconder e levantar atirando; se você der a volta e eles ficarem expostos, trocam de lugar. Tiro na cabeça dá o triplo de dano. A vida volta sozinha depois de 5 s sem levar tiro. Se você morre, renasce no início e a arena recomeça. Arena limpa: nova onda em 8 s.
 
 ## Estrutura
 - `src/skeleton.*` — esqueleto de 19 ossos encaixado no crash dummy (o GLB não tem rig utilizável)
@@ -37,6 +41,11 @@ Dependências (Ubuntu): `libglfw3-dev libglew-dev libglm-dev libassimp-dev`.
 - `src/gun_handling.*` — animações de pegar da mesa, guardar e sacar (cintura e costas), por IK em cima da animação do corpo
 - `src/weapon.*` — tiro hitscan pela mira (qualquer arma), clarão, rastro, faíscas, fumaça, cápsulas e marcas de tiro
 - `src/aim_ik.*` — pose de mira: IK dos dois braços segurando a arma na linha do olho, mão fechada na empunhadura
+- `src/arena.*` — paredes, caixotes de proteção e a porta de dobradiça (abre em tempo real)
+- `animation-teste/` — clipes do Mixamo da cobertura (de costas para a parede): `Left/Right Cover Sneak` (de pé, cobertura alta) e `Crouched Sneaking Left/Right` (agachado, cobertura baixa), retargetados como o andar/correr
+- `src/ragdoll.*` — ragdoll na morte (jogador e soldados): partículas nas juntas presas por varetas (Verlet), gravidade, colisão com chão e caixas, pose reconstruída das partículas; o tiro que mata empurra o corpo
+- `src/cover.*` — cobertura: faces das caixas onde dá para se proteger (baixa até 1,45 m, alta acima), cobertura do jogador e lugares escondidos para os soldados
+- `src/soldiers.*` — soldados: esqueleto encaixado no rig do `russian_soldier.glb` (pesos de skin do arquivo), mesmas animações do jogador retargetadas, IA de combate e hitbox por parte do corpo
 - `src/physics.*` — cápsula do personagem, degraus, bolas com física, mapa de teste
 - `src/renderer.*` + `shaders/` — renderização (ver abaixo)
 - `src/graphics_settings.*` — opções gráficas, presets e `settings.ini`
@@ -66,6 +75,8 @@ Simular andando para frente (ex.: subir a escada): `./build/ga --shot f.png --po
 Mira/tiro: `./build/ga --shot f.png --aim --pos 0 0 -12 --yaw 180 --cam 0 2 0 --fire 3` (`--gun` só segurando, `--view yaw pitch dist` e `--viewat x y z` para fotografar de outro ângulo).
 
 Pegar/guardar/sacar: `./build/ga --shot f.png --weapon 1 --act pickup 0.55 --view 200 20 2 --viewat 1.6 1 2.3` (`--weapon 0|1|2` = pistola/AK-47/AK-12; `--act stow|draw T` mostra o gesto no tempo T; `--holster` equipa as três no corpo).
+
+Arena: `./build/ga --shot f.png --pos 0 0 33 --npc 3 --view 30 5 7 --viewat 0 1.2 38` (`--npc T` simula os soldados por T s com o jogador em `--pos`, `--door` abre a porta, `--kill N` mata os N primeiros, `--crouch 0.5` agacha o jogador, `--coverclip low|stand 0|1 fase` mostra a pose dos clipes de cobertura).
 
 `--anim`: idle, walk, jog, run, jump, fall, land, bind. `--phase` 0 = pé esquerdo à frente.
 

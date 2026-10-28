@@ -1,5 +1,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "aim_ik.h"
+#include "gun_tuning.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -137,6 +138,10 @@ glm::mat4 handForGun(const glm::mat4& gun, const GunDef& d) {
 }
 
 glm::mat4 slotMatrix(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], int slot, const GunDef& d) {
+    return applyGunOffset(slotBase(sk, globals, slot, d), d, gunTuning(d).body[slot]);
+}
+
+glm::mat4 slotBase(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], int slot, const GunDef& d) {
     if (slot == 0) {
         // cintura: cano para baixo, topo do ferrolho para frente, lado esquerdo da arma encostado
         // no quadril; um pouco inclinada (cano para trás), como num coldre de cintura
@@ -170,6 +175,12 @@ void applyCarryGrip(const Skeleton& sk, Pose& pose, const GunDef& d, float weigh
     glm::quat hand = gunRotation(dir) * glm::inverse(gripFrame(d));
     glm::quat local = glm::normalize(glm::inverse(rotOf(g[FARM_R])) * hand);
     pose.rot[HAND_R] = glm::slerp(pose.rot[HAND_R], local, weight);
+    // ajuste do editor: leva a mão (e a arma junto) até a posição ajustada
+    const GunOffset& off = gunTuning(d).carry;
+    if (off.isZero()) return;
+    computeGlobals(sk, pose, g);
+    glm::mat4 gun = applyGunOffset(gunInHand(g[HAND_R], d), d, off);
+    applyRightHand(sk, pose, handForGun(gun, d), weight);
 }
 
 void applyAimPose(const Skeleton& sk, Pose& pose, const GunDef& d, const glm::vec3& target, float weight, float recoil) {
@@ -197,6 +208,12 @@ void applyAimPose(const Skeleton& sk, Pose& pose, const GunDef& d, const glm::ve
     glm::vec3 flipAxis = glm::cross(aim, glm::vec3(0, 1, 0));
     if (glm::length(flipAxis) > 1e-4f) aim = glm::angleAxis(recoil * 0.30f, glm::normalize(flipAxis)) * aim;
     glm::quat gunRot = gunRotation(aim);
+    {   // ajuste do editor
+        glm::mat4 gun = glm::translate(glm::mat4(1.0f), grip) * glm::mat4_cast(gunRot) * glm::translate(glm::mat4(1.0f), -d.grip);
+        gun = applyGunOffset(gun, d, gunTuning(d).aim);
+        grip = glm::vec3(gun * glm::vec4(d.grip, 1.0f));
+        gunRot = rotOf(gun);
+    }
 
     // 3) braço direito: IK até o pulso; mão orientada pela arma
     glm::quat handR = gunRot * glm::inverse(gripFrame(d));
@@ -239,6 +256,7 @@ glm::mat4 rifleHold(const Skeleton& sk, const Pose& pose, const GunDef& d, const
     computeGlobals(sk, pose, g);
     // pronto baixo: coronha perto do ombro, cano para frente, para baixo e cruzando o corpo
     glm::mat4 carry = onChest(sk, g, rifleAt(d, {-0.11f, 1.10f, 0.12f}, {0.48f, -0.60f, 1.0f}, {0.15f, 1.0f, 0.0f}));
+    carry = applyGunOffset(carry, d, gunTuning(d).carry);
     if (aimW <= 0.001f) return carry;
     // mira: olho direito na linha de mira, cano apontando para o alvo
     glm::vec3 eye = glm::vec3(g[HEAD] * glm::vec4(-0.035f, 0.085f, 0.075f, 1.0f));
@@ -248,6 +266,7 @@ glm::mat4 rifleHold(const Skeleton& sk, const Pose& pose, const GunDef& d, const
     if (glm::length(side) > 1e-4f) dir = glm::angleAxis(recoil * 0.06f, glm::normalize(side)) * dir; // cano sobe no coice
     glm::mat4 aim = glm::translate(glm::mat4(1.0f), eye - dir * (0.035f * recoil)) * glm::mat4_cast(gunRotation(dir)) *
                     glm::translate(glm::mat4(1.0f), -d.eye);
+    aim = applyGunOffset(aim, d, gunTuning(d).aim);
     return blendRigid(carry, aim, aimW);
 }
 
@@ -314,4 +333,39 @@ void applyHandReach(const Skeleton& sk, Pose& pose, const HandReach& r) {
         armTo(sk, p, true, r.hand, r.pole);
         pose = blendPose(pose, p, r.arm);
     }
+}
+
+void applyPalmOnSurface(const Skeleton& sk, Pose& pose, bool right, const glm::vec3& point, const glm::vec3& normal,
+                        float weight) {
+    if (weight <= 0.001f) return;
+    // eixos da mão: palma (+X na direita, -X na esquerda) contra a superfície, dedos (-Y) para cima
+    glm::vec3 x = right ? -normal : normal;
+    glm::vec3 y = glm::vec3(0, -1, 0);
+    y = glm::normalize(y - x * glm::dot(y, x));
+    glm::quat rot = glm::normalize(glm::quat_cast(glm::mat3(x, y, glm::cross(x, y))));
+    glm::vec3 wrist = point - rot * (right ? kPalmR : kPalmL);
+    glm::mat4 hand = glm::translate(glm::mat4(1.0f), wrist) * glm::mat4_cast(rot);
+    Pose p = pose;
+    // cotovelo para baixo e para fora
+    armTo(sk, p, right, hand, right ? glm::vec3(-0.4f, -0.6f, -0.1f) : glm::vec3(0.4f, -0.6f, -0.1f));
+    setFingerCurl(sk, p, right ? 1 : 0, 0.05f, 0.1f); // mão aberta
+    pose = blendPose(pose, p, weight);
+}
+
+void applyShoulderPush(Pose& pose, float weight) {
+    if (weight <= 0.001f) return;
+    // gira o tronco (ombro esquerdo para frente) e inclina um pouco para dentro da porta;
+    // a cabeça desfaz parte do giro para continuar olhando para frente
+    pose.rot[SPINE] = pose.rot[SPINE] * eul(0.06f * weight, -0.30f * weight, 0.0f);
+    pose.rot[CHEST] = pose.rot[CHEST] * eul(0.08f * weight, -0.45f * weight, -0.06f * weight);
+    pose.rot[HEAD] = pose.rot[HEAD] * eul(0.0f, 0.55f * weight, 0.0f);
+}
+
+void applyCrouch(const Skeleton& sk, Pose& pose, float amount, float lean) {
+    if (amount <= 0.001f) return;
+    HandReach r;
+    r.crouch = amount;
+    r.lean = lean;
+    applyHandReach(sk, pose, r);
+    pose.rot[NECK] = pose.rot[NECK] * eul(-lean * 0.9f, 0.0f, 0.0f); // continua olhando para frente
 }
