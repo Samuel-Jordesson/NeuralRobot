@@ -1,4 +1,5 @@
 #include "physics.h"
+#include "terrain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -106,12 +107,19 @@ World World::makeTestMap() {
     return w;
 }
 
+float World::floorAt(float x, float z) const {
+    float y;
+    return terrain && terrain->heightAt(x, z, y) ? std::max(y, groundY - 50.0f) : groundY;
+}
+
 float World::raycast(const glm::vec3& o, const glm::vec3& d, float maxDist) const {
     float best = maxDist;
     if (d.y < -1e-6f) {
         float t = (groundY - o.y) / d.y;
         if (t >= 0.0f && t < best) best = t;
     }
+    float tt;
+    if (terrain && terrain->raycast(o, d, best, tt) && tt < best) best = tt;
     for (const Box& b : boxes) {
         float tmin = 0.0f, tmax = best;
         bool hit = true;
@@ -138,6 +146,12 @@ World::RayHit World::raycastHit(const glm::vec3& o, const glm::vec3& d, float ma
     if (d.y < -1e-6f) {
         float t = (groundY - o.y) / d.y;
         if (t >= 0.0f && t < best.t) { best = {true, t, {0, 1, 0}, -1}; }
+    }
+    float tt;
+    if (terrain && terrain->raycast(o, d, best.t, tt) && tt < best.t) {
+        glm::vec3 p = o + d * tt;
+        float a = floorAt(p.x - 0.1f, p.z), b = floorAt(p.x + 0.1f, p.z), c = floorAt(p.x, p.z - 0.1f), e = floorAt(p.x, p.z + 0.1f);
+        best = {true, tt, glm::normalize(glm::vec3(a - b, 0.2f, c - e)), -1};
     }
     for (const Box& b : boxes) {
         float tmin = 0.0f, tmax = best.t;
@@ -175,9 +189,9 @@ World::RayHit World::raycastHit(const glm::vec3& o, const glm::vec3& d, float ma
 }
 
 float World::groundHeightAt(float x, float z, float maxY) const {
-    float h = groundY;
+    float h = floorAt(x, z);
     for (const Box& b : boxes)
-        if (x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z && b.max.y <= maxY) h = std::max(h, b.max.y);
+        if (b.solid && x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z && b.max.y <= maxY) h = std::max(h, b.max.y);
     return h;
 }
 
@@ -200,7 +214,7 @@ void CharacterBody::step(World& w, const glm::vec3& wishDir, float wishSpeed, bo
     vel.z = hv.z;
 
     if (jumpBuffer_ > 0.0f && coyote_ > 0.0f) {
-        vel.y = kJumpSpeed;
+        vel.y = jumpSpeed;
         grounded = false;
         coyote_ = 0.0f;
         jumpBuffer_ = 0.0f;
@@ -262,17 +276,18 @@ void CharacterBody::resolve(World& w, bool wasGrounded) {
         if (!any) break;
     }
 
-    if (pos.y <= w.groundY) {
-        pos.y = w.groundY;
+    const float floorY = w.floorAt(pos.x, pos.z);
+    if (pos.y <= floorY) {
+        pos.y = floorY;
         if (vel.y < 0.0f) vel.y = 0.0f;
         grounded = true;
     }
 
     // Grudar no chão ao descer degraus (evita "voar" do topo de cada degrau).
     if (!grounded && wasGrounded && vel.y <= 0.0f) {
-        float support = w.groundY;
+        float support = floorY;
         for (const Box& b : w.boxes)
-            if (b.max.y <= pos.y + 0.01f && rectDist(b, pos.x, pos.z) < radius * 0.7f) support = std::max(support, b.max.y);
+            if (b.solid && b.max.y <= pos.y + 0.01f && rectDist(b, pos.x, pos.z) < radius * 0.7f) support = std::max(support, b.max.y);
         if (pos.y - support <= kStepHeight + 0.05f) {
             pos.y = support;
             vel.y = 0.0f;
@@ -289,8 +304,8 @@ void stepBalls(World& w, CharacterBody& ch, float dt) {
         b.pos += b.vel * dt;
         bool onGround = false;
 
-        if (b.pos.y - b.radius < w.groundY) {
-            b.pos.y = w.groundY + b.radius;
+        if (b.pos.y - b.radius < w.floorAt(b.pos.x, b.pos.z)) {
+            b.pos.y = w.floorAt(b.pos.x, b.pos.z) + b.radius;
             if (b.vel.y < 0.0f) b.vel.y = b.vel.y < -1.0f ? -b.vel.y * 0.45f : 0.0f;
             onGround = true;
         }

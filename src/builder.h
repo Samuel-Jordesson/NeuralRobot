@@ -1,8 +1,8 @@
 #pragma once
 #include <string>
 
-// Compila a versão final do jogo (sem editor de armas e sem botão de compilar) em segundo
-// plano: cmake -DGA_EDITOR=OFF em <raiz>/build-final. O executável fica em build-final/ga.
+// Compila a versão final do jogo (sem editor) em segundo plano: cmake -DGA_EDITOR=OFF em
+// <raiz>/build-final, e copia o jogo pronto (executável + shaders e modelos) para <raiz>/Jogo-final.
 namespace builder {
 
 enum class State { Idle, Running, Ok, Failed };

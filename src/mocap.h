@@ -10,6 +10,7 @@ struct MocapClip {
     float duration = 1.0f;    // segundos por ciclo
     float cycleLength = 1.0f; // metros percorridos por ciclo (root motion)
     float phaseOffset = 0.0f; // fase 0 = calcanhar esquerdo tocando o chão
+    glm::vec3 travel{0.0f};   // deslocamento do quadril do começo ao fim (tirado das poses)
 
     bool valid() const { return !frames.empty(); }
     float naturalSpeed() const { return cycleLength / duration; }
@@ -20,5 +21,9 @@ struct MocapClip {
 bool loadMixamoClip(const std::string& path, const Skeleton& sk, MocapClip& out);
 // Giro médio do peito no clipe (rad, 0 = olhando para +Z).
 float clipMeanYaw(const MocapClip& c);
+// Giro do peito num quadro.
+float poseYaw(const Pose& p);
+// Gira o clipe inteiro em volta do eixo vertical (poses e deslocamento).
+void rotateClip(MocapClip& c, float yaw);
 // Tira esse giro: o corpo do clipe fica de frente para +Z (ex.: de costas para a parede na cobertura).
 void removeClipYaw(MocapClip& c);

@@ -25,6 +25,8 @@ struct RenderScene {
         glm::mat4 model;
     };
     std::vector<Prop> props;
+    const struct Terrain* terrain = nullptr;    // relevo esculpido no editor
+    const struct GroundPaint* paint = nullptr;  // pintura do chão
 
     // armas (na mão, no corpo e no mundo) e efeitos de tiro (do jogador e dos inimigos)
     std::vector<Prop> guns;

@@ -52,6 +52,7 @@ void forEachField(GraphicsSettings& s, F&& f) {
     f("fxaa", &s.fxaa);
     f("showFps", &s.showFps);
     f("immortal", &s.immortal);
+    f("scene", &s.scene);
     f("shadowRes", &s.shadowRes);
     f("shadowCascades", &s.shadowCascades);
     f("shadowDistance", &s.shadowDistance);

@@ -8,7 +8,7 @@ struct GLFWwindow;
 // Menu de pausa (Esc) com as opções gráficas, feito com Dear ImGui.
 namespace menu {
 
-enum class Action { None, Resume, Quit, EditGuns, Compile };
+enum class Action { None, Resume, Quit, EditGuns, Compile, ChangeScene, FreeEdit };
 
 bool init(GLFWwindow* win, bool installCallbacks);
 void shutdown();
@@ -43,6 +43,8 @@ EditorAction drawGunEditor(GunEditor& ed, const char* const* gunNames, const boo
                            float& panelFrac);
 // Andamento da compilação da versão final (canto da tela).
 void drawBuildStatus();
+// Faixa "Jogando - Esc para parar" quando o jogo foi aberto pelo botão Jogar do editor.
+void drawPlayBanner();
 void endFrame();
 
 } // namespace menu

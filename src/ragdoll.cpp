@@ -18,7 +18,8 @@ enum P {
     COUNT
 };
 constexpr float kStep = 1.0f / 120.0f;
-constexpr int kIters = 10;
+constexpr int kIters = 14;
+constexpr float kToneTime = 0.9f; // segundos até o corpo ficar totalmente mole
 
 struct Src { Bone bone; bool tail; float r; };
 const Src kSrc[COUNT] = {
@@ -88,6 +89,66 @@ void Ragdoll::start(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], con
     addStick(SHR, WRR, true, 0.45f);
     // comprimentos da pose neutra (os ossos de verdade), não da pose em que morreu
     for (Stick& st : sticks_) st.len = glm::length(rest_[st.a] - rest_[st.b]) * st.scale;
+    // limites extras: o joelho não encosta no peito, a cabeça não dobra até o quadril
+    const int limit[][2] = {{CHS, KNL}, {CHS, KNR}, {HTOP, HIP}, {HTOP, SPN}, {WRL, HIP}, {WRR, HIP}};
+    for (auto& c : limit) {
+        addStick(c[0], c[1], true);
+        sticks_.back().len = glm::length(rest_[c[0]] - rest_[c[1]]) * 0.6f;
+    }
+    // músculos: guardam a forma da hora da morte (pernas e braços não viram macarrão na queda)
+    const int tone[][2] = {{HIP, ANL}, {HIP, ANR}, {SHL, WRL}, {SHR, WRR}, {CHS, KNL}, {CHS, KNR}, {HIP, HTOP},
+                           {CHS, WRL}, {CHS, WRR}, {THL, ANR}, {THR, ANL}};
+    for (auto& c : tone) {
+        addStick(c[0], c[1]);
+        sticks_.back().len = glm::length(parts_[c[0]].p - parts_[c[1]].p);
+        sticks_.back().tone = true;
+    }
+
+    // pares que se repelem: partes do corpo sem vareta entre si (o tronco é um bloco só)
+    pairs_.clear();
+    auto torso = [](int i) { return i == HIP || i == SPN || i == CHS || i == NCK || i == SHL || i == SHR || i == THL || i == THR; };
+    for (int i = 0; i < COUNT; ++i)
+        for (int j = i + 1; j < COUNT; ++j) {
+            if (torso(i) && torso(j)) continue;
+            bool linked = false;
+            for (const Stick& st : sticks_)
+                if (!st.tone && !st.minOnly && ((st.a == i && st.b == j) || (st.a == j && st.b == i))) { linked = true; break; }
+            if (!linked) pairs_.push_back({i, j});
+        }
+}
+
+void Ragdoll::hinges() {
+    // frente do quadril e do peito (esquerda = +X, cima = +Y -> frente = +Z)
+    glm::vec3 fh = glm::cross(parts_[THL].p - parts_[THR].p, parts_[SPN].p - parts_[HIP].p);
+    glm::vec3 fc = glm::cross(parts_[SHL].p - parts_[SHR].p, parts_[NCK].p - parts_[CHS].p);
+    if (glm::length(fh) < 1e-6f || glm::length(fc) < 1e-6f) return;
+    fh = glm::normalize(fh);
+    fc = glm::normalize(fc);
+    auto bend = [&](int top, int mid, int end, const glm::vec3& dir, float minOff, float strength) {
+        glm::vec3 m = (parts_[top].p + parts_[end].p) * 0.5f;
+        float off = glm::dot(parts_[mid].p - m, dir);
+        if (off >= minOff) return;
+        glm::vec3 c = dir * ((minOff - off) * strength);
+        parts_[mid].p += c * 0.7f;
+        parts_[top].p -= c * 0.15f;
+        parts_[end].p -= c * 0.15f;
+    };
+    bend(THL, KNL, ANL, fh, 0.01f, 1.0f);   // joelho para frente
+    bend(THR, KNR, ANR, fh, 0.01f, 1.0f);
+    bend(SHL, ELL, WRL, -fc, -0.02f, 0.5f); // cotovelo para trás (mais solto: o braço gira bastante)
+    bend(SHR, ELR, WRR, -fc, -0.02f, 0.5f);
+}
+
+void Ragdoll::selfCollide() {
+    for (auto [i, j] : pairs_) {
+        Particle &a = parts_[i], &b = parts_[j];
+        glm::vec3 d = b.p - a.p;
+        float len = glm::length(d), minD = (a.r + b.r) * 0.9f;
+        if (len >= minD || len < 1e-6f) continue;
+        glm::vec3 c = d * (0.5f * (len - minD) / len);
+        a.p += c;
+        b.p -= c;
+    }
 }
 
 void Ragdoll::step(const World& w, float dt) {
@@ -97,24 +158,28 @@ void Ragdoll::step(const World& w, float dt) {
     int n = std::min(12, std::max(1, (int)std::round(dt / kStep)));
     for (int s = 0; s < n; ++s) {
         for (Particle& p : parts_) {
-            glm::vec3 v = (p.p - p.prev) * 0.995f;
+            glm::vec3 v = (p.p - p.prev) * 0.992f;
             p.prev = p.p;
             p.p += v + g * kStep * kStep;
         }
+        const float tone = 0.12f * std::max(0.0f, 1.0f - time_ / kToneTime); // músculo vai soltando
         for (int it = 0; it < kIters; ++it) {
             for (const Stick& st : sticks_) {
+                if (st.tone && tone <= 0.0f) continue;
                 Particle &a = parts_[st.a], &b = parts_[st.b];
                 glm::vec3 d = b.p - a.p;
                 float len = glm::length(d);
                 if (len < 1e-6f || (st.minOnly && len >= st.len)) continue;
-                glm::vec3 corr = d * (0.5f * (len - st.len) / len);
+                glm::vec3 corr = d * ((st.tone ? tone : 0.5f) * (len - st.len) / len);
                 a.p += corr;
                 b.p -= corr;
             }
+            hinges();
+            selfCollide();
             // colisão: chão e caixas (empurra para fora e segura com atrito)
             for (Particle& p : parts_) {
                 bool hit = false;
-                if (p.p.y - p.r < w.groundY) { p.p.y = w.groundY + p.r; hit = true; }
+                if (float fy = w.floorAt(p.p.x, p.p.z); p.p.y - p.r < fy) { p.p.y = fy + p.r; hit = true; }
                 for (const Box& b : w.boxes) {
                     if (!b.solid) continue;
                     glm::vec3 q = glm::clamp(p.p, b.min, b.max);

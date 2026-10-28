@@ -25,6 +25,13 @@ if(NOT GA_EDITOR)
   endif()
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/weapons.ini)
   configure_file(src/weapons_baked.h.in ${CMAKE_BINARY_DIR}/generated/weapons_baked.h @ONLY)
+  # cenário oficial montado no editor livre (levels/oficial.txt) vai embutido também
+  set(GA_OFFICIAL_LEVEL "")
+  if(EXISTS ${CMAKE_SOURCE_DIR}/levels/oficial.txt)
+    file(READ ${CMAKE_SOURCE_DIR}/levels/oficial.txt GA_OFFICIAL_LEVEL)
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/levels/oficial.txt)
+  configure_file(src/level_baked.h.in ${CMAKE_BINARY_DIR}/generated/level_baked.h @ONLY)
 endif()
 find_package(Threads REQUIRED)
 
@@ -43,6 +50,9 @@ add_executable(ga
   src/arena.cpp
   src/cover.cpp
   src/ragdoll.cpp
+  src/level.cpp
+  src/free_editor.cpp
+  src/terrain.cpp
   src/soldiers.cpp
   src/builder.cpp
   src/loadout.cpp

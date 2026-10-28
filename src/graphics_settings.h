@@ -13,7 +13,8 @@ struct GraphicsSettings {
     int msaa = 4;             // 1, 2, 4 ou 8 amostras
     bool fxaa = true;
     bool showFps = true;
-    bool immortal = true;     // só na versão de desenvolvimento: o jogador não morre
+    bool immortal = true;
+    int scene = 0;            // só na versão de desenvolvimento: cenário (0 = teste/arena, 1 = oficial)     // só na versão de desenvolvimento: o jogador não morre
 
     // sombras
     int shadowRes = 2048;     // por cascata

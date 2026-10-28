@@ -13,7 +13,8 @@ Dependências (Ubuntu): `libglfw3-dev libglew-dev libglm-dev libassimp-dev`.
 |---|---|
 | W A S D | mover (relativo à câmera) |
 | Shift | correr |
-| Espaço | pular |
+| Espaço | pular (correndo: pulo longo com a animação Running Jump) |
+| Shift na direção de um obstáculo | parkour: de 65 cm a 1,15 m salta por cima sozinho; mais baixo só passa a perna por cima com um pulinho. Não salta escada, coisa comprida (mesa pela ponta) nem a ponta de um obstáculo |
 | E | pegar a arma da mesa (ele anda até a borda e pega com a mão) |
 | 1 / 2 / 3 | pistola (cintura) / fuzil 1 / fuzil 2 (costas): saca; a mesma tecla guarda; outra tecla troca de arma |
 | Botão direito | mirar (zoom no ombro + mira de ponto) |
@@ -25,6 +26,36 @@ Dependências (Ubuntu): `libglfw3-dev libglew-dev libglm-dev libassimp-dev`.
 | F2 | liga/desliga Foot IK |
 | R | voltar ao início |
 | Esc | menu de pausa com as opções gráficas |
+
+## Cenários
+- **Oficial** (o do jogo final; a versão compilada usa sempre este): o mapa blocado no Blender (`Untitled.fbx`, em centímetros). O personagem começa no corredor (onde está a esfera, que não aparece no jogo), virado para a porta da sala do fundo, onde ficam 2 inimigos. Uma segunda porta, no lugar da porta decorativa mais próxima, leva à sala da esquerda. Os vãos são recortados nas paredes ao carregar, e a colisão é gerada da própria malha (células de 15 cm; entulho baixo não bloqueia). As portas extras ficam em `door2` no `levels/oficial.txt` e são ajustadas no painel do editor livre ("Outras portas").
+- **Teste (arena)**: o mapa de blocos com a arena, as mesas e os 5 soldados.
+
+No editor, o cenário é escolhido no menu de pausa (Esc > Cenário) e fica salvo no `settings.ini`; também dá para abrir direto com `./build/ga --scene 1` (oficial) ou `--scene 0` (teste).
+
+## Editor (só na versão de desenvolvimento)
+`./run.sh` (sem argumentos) abre o jogo no editor, no estilo da Unreal. Para abrir direto no jogo, passe qualquer argumento (por exemplo `./run.sh --scene 1`).
+
+- **Barra de cima:**
+  - **Salvar** grava o cenário em `levels/<cenário>.txt`.
+  - **Importar** copia um `.glb`, `.gltf`, `.fbx` ou `.obj` para `assets/`.
+  - **Compilar** gera a versão final e copia o jogo pronto para `Jogo-final/` (rode `Jogo-final/ga`).
+  - **Configurações** abre as opções gráficas.
+  - **Jogar** roda o jogo; **Esc** para e volta ao editor.
+  - **Cenário** troca entre o de teste e o oficial.
+- **Vista:**
+  - Segure o botão direito e use mouse + WASD/Q/E para voar; Shift acelera.
+  - Clique seleciona. G move, R gira, S escala, e X/Y/Z travam o eixo; clique confirma e o botão direito cancela.
+  - F foca no selecionado, Delete remove e Esc tira a seleção.
+- **Detalhes (esquerda):** posição, giro, escala e texturas do objeto. Numa arma, também o lugar no chão e o botão **Abrir editor da arma** (pose na mão e no corpo).
+- **Cenário (direita):** a lista de tudo: objetos, início, porta, inimigos, armas, outras portas e blocos. Clique duplo leva a câmera até o item.
+- **Pintar (pincel na barra de cima):** segure o botão esquerdo na vista; Shift inverte.
+  - **Textura:** até 4 texturas por cenário, cada uma com cor (albedo), normal map e repetição, misturadas suavemente. Vale para todo chão virado para cima. Os pesos ficam em `levels/<cenário>_pintura.png`. Use "Importar textura" para trazer png/jpg para `textures/`.
+  - **Relevo:** "Criar terreno aqui" põe uma malha de chão que se esculpe (Subir, Descer, Suavizar, Nivelar). A física e a câmera andam por cima; fica em `levels/<cenário>_relevo.bin`.
+  - **Folhagem:** pinta cópias de um modelo (grama, árvores, pedras) com giro e tamanho aleatórios, densidade e espaço mínimo. A grama de exemplo é `assets/grama.glb`.
+- **Colisão de cada modelo:** nos Detalhes de um modelo (no navegador ou posto no cenário), escolha "Sem colisão", "Sólido" ou "Física" (cai e é empurrado). Vale para todas as cópias e fica em `assets.ini`.
+- **Porta:** o primeiro item do navegador de conteúdo; arraste para pôr uma porta. No cenário oficial o vão é recortado na parede.
+- **Navegador de conteúdo (embaixo):** os modelos do projeto, por tipo. Arraste um para a vista para pôr no cenário. Uma arma do jogo arrastada muda o lugar onde ela fica no chão. Modelos em centímetros entram com escala 0,01.
 
 ## Arena
 Em frente ao início (siga reto para +Z) fica uma arena murada de 26 x 26 m. A porta de madeira abre sozinha quando alguém chega perto, sempre para o lado oposto de quem vem, e fechada bloqueia passagem e tiros. Lá dentro há 5 soldados (`russian_soldier.glb`) com AK-47: quando te veem, avançam, andam de lado e atiram em rajadas. Os soldados correm para trás de coberturas baixas que os escondam de você, agacham e alternam entre esconder e levantar atirando; se você der a volta e eles ficarem expostos, trocam de lugar. Tiro na cabeça dá o triplo de dano. A vida volta sozinha depois de 5 s sem levar tiro. Se você morre, renasce no início e a arena recomeça. Arena limpa: nova onda em 8 s.
@@ -42,8 +73,11 @@ Em frente ao início (siga reto para +Z) fica uma arena murada de 26 x 26 m. A p
 - `src/weapon.*` — tiro hitscan pela mira (qualquer arma), clarão, rastro, faíscas, fumaça, cápsulas e marcas de tiro
 - `src/aim_ik.*` — pose de mira: IK dos dois braços segurando a arma na linha do olho, mão fechada na empunhadura
 - `src/arena.*` — paredes, caixotes de proteção e a porta de dobradiça (abre em tempo real)
-- `animation-teste/` — clipes do Mixamo da cobertura (de costas para a parede): `Left/Right Cover Sneak` (de pé, cobertura alta) e `Crouched Sneaking Left/Right` (agachado, cobertura baixa), retargetados como o andar/correr
+- `animation-teste/` — clipes do Mixamo da cobertura (de costas para a parede): `Left/Right Cover Sneak` (de pé, cobertura alta) e `Crouched Sneaking Left/Right` (agachado, cobertura baixa), retargetados como o andar/correr; em `animation-teste/cover saindo e entrando/` ficam as animações de entrar e sair da cobertura (em pé e abaixado), tocadas uma vez ao apertar Q
 - `src/ragdoll.*` — ragdoll na morte (jogador e soldados): partículas nas juntas presas por varetas (Verlet), gravidade, colisão com chão e caixas, pose reconstruída das partículas; o tiro que mata empurra o corpo
+- `animation-teste/parkur/` — `Running Jump.fbx` (pulo correndo, sincronizado com o voo da física) e `Jumping.fbx` (salto por cima de obstáculos baixos, estilo Watch Dogs 2)
+- `src/level.*` — cenários: o oficial (escritório + corredor), colisão gerada da malha, vãos de porta e passagens livres
+- `src/free_editor.*` — editor estilo Unreal (barra, detalhes, lista do cenário, navegador de conteúdo, importar, câmera voando, gestos G/R/S)
 - `src/cover.*` — cobertura: faces das caixas onde dá para se proteger (baixa até 1,45 m, alta acima), cobertura do jogador e lugares escondidos para os soldados
 - `src/soldiers.*` — soldados: esqueleto encaixado no rig do `russian_soldier.glb` (pesos de skin do arquivo), mesmas animações do jogador retargetadas, IA de combate e hitbox por parte do corpo
 - `src/physics.*` — cápsula do personagem, degraus, bolas com física, mapa de teste
@@ -76,7 +110,7 @@ Mira/tiro: `./build/ga --shot f.png --aim --pos 0 0 -12 --yaw 180 --cam 0 2 0 --
 
 Pegar/guardar/sacar: `./build/ga --shot f.png --weapon 1 --act pickup 0.55 --view 200 20 2 --viewat 1.6 1 2.3` (`--weapon 0|1|2` = pistola/AK-47/AK-12; `--act stow|draw T` mostra o gesto no tempo T; `--holster` equipa as três no corpo).
 
-Arena: `./build/ga --shot f.png --pos 0 0 33 --npc 3 --view 30 5 7 --viewat 0 1.2 38` (`--npc T` simula os soldados por T s com o jogador em `--pos`, `--door` abre a porta, `--kill N` mata os N primeiros, `--crouch 0.5` agacha o jogador, `--coverclip low|stand 0|1 fase` mostra a pose dos clipes de cobertura).
+Arena: `./build/ga --shot f.png --pos 0 0 33 --npc 3 --view 30 5 7 --viewat 0 1.2 38` (`--npc T` simula os soldados por T s com o jogador em `--pos`, `--door` abre a porta, `--kill N` mata os N primeiros; `./build/ga --vaulttest` imprime o que o parkour faria em alguns pontos do mapa, `--crouch 0.5` agacha o jogador, `--coverclip low|stand|in|out|inlow|outlow|runjump|vault 0|1 fase` mostra a pose dos clipes de cobertura).
 
 `--anim`: idle, walk, jog, run, jump, fall, land, bind. `--phase` 0 = pé esquerdo à frente.
 

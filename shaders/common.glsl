@@ -175,3 +175,35 @@ vec3 shadePBR(vec3 albedo, float metal, float rough, float ao, vec3 N, vec3 P) {
     vec3 ambient = (1.0 - Fa) * (1.0 - metal) * albedo * irr * occl + pref * Fa * specOcc;
     return direct + ambient;
 }
+
+// ---- pintura do chão (editor): até 4 camadas misturadas por um mapa de pesos em (x, z)
+uniform int uPaintOn;
+uniform vec4 uPaintRect;            // x0, z0, 1/lado
+uniform sampler2D uPaintWeights;    // RGBA = peso das camadas 1..4
+uniform sampler2DArray uPaintAlbedo;
+uniform sampler2DArray uPaintNormal;
+uniform vec4 uPaintTile;            // repetição de cada camada (m)
+uniform int uPaintCount;
+
+// Só em superfícies viradas para cima (chão); 'geoN' = normal da geometria.
+void applyPaint(vec3 pos, vec3 geoN, inout vec3 albedo, inout vec3 N, inout float rough) {
+    if (uPaintOn == 0 || geoN.y < 0.5) return;
+    vec2 uv = (pos.xz - uPaintRect.xy) * uPaintRect.z;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return;
+    vec4 w = texture(uPaintWeights, uv) * smoothstep(0.5, 0.75, geoN.y);
+    float total = 0.0;
+    vec3 a = vec3(0.0), n = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        if (i >= uPaintCount || w[i] < 0.004) continue;
+        vec2 t = pos.xz / max(uPaintTile[i], 0.05);
+        a += texture(uPaintAlbedo, vec3(t, float(i))).rgb * w[i];
+        vec3 tn = texture(uPaintNormal, vec3(t, float(i))).xyz * 2.0 - 1.0;
+        n += normalize(vec3(1, 0, 0) * tn.x + vec3(0, 0, 1) * tn.y + geoN * tn.z) * w[i];
+        total += w[i];
+    }
+    if (total < 0.004) return;
+    float k = min(total, 1.0);
+    albedo = mix(albedo, a / total, k);
+    N = normalize(mix(N, normalize(n), k));
+    rough = mix(rough, 0.85, k);
+}

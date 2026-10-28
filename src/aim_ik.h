@@ -57,6 +57,8 @@ void applyHandReach(const Skeleton& sk, Pose& pose, const HandReach& r);
 // point/normal no espaço do modelo; a normal aponta da superfície para o personagem.
 void applyPalmOnSurface(const Skeleton& sk, Pose& pose, bool right, const glm::vec3& point, const glm::vec3& normal,
                         float weight);
+// Leva a mão (direita ou esquerda) até a matriz 'hand' (espaço do modelo) por IK, com o peso.
+void applyHandTarget(const Skeleton& sk, Pose& pose, bool right, const glm::mat4& hand, float weight);
 // Agachado: quadril desce 'amount' metros com os pés no lugar; 'lean' inclina o tronco.
 void applyCrouch(const Skeleton& sk, Pose& pose, float amount, float lean);
 // Tronco de lado, ombro esquerdo na frente (empurrando com o ombro), com o peso 0..1.

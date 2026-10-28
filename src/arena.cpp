@@ -22,8 +22,9 @@ void Door::update(World& w, const std::vector<CharacterBody*>& bodies, float dt)
     for (int iter = 0; iter < 2; ++iter)
         for (CharacterBody* b : bodies) {
             if (b->pos.y > height || b->pos.y + b->height < 0.0f) continue;
-            glm::vec2 u(std::cos(angle), -std::sin(angle)); // da dobradiça para a ponta
-            glm::vec2 n(std::sin(angle), std::cos(angle));  // normal da folha (lado +)
+            const float a = angle + base;
+            glm::vec2 u(std::cos(a), -std::sin(a)); // da dobradiça para a ponta
+            glm::vec2 n(std::sin(a), std::cos(a));  // normal da folha (lado +)
             glm::vec2 p(b->pos.x - hinge.x, b->pos.z - hinge.z);
             float along = glm::dot(p, u);
             if (along < -b->radius || along > width + b->radius) continue;
@@ -61,8 +62,9 @@ void Door::update(World& w, const std::vector<CharacterBody*>& bodies, float dt)
     if (collider >= 0) {
         Box& b = w.boxes[collider];
         if (std::fabs(angle) < 0.06f) {
-            b.min = hinge + glm::vec3(0.0f, 0.0f, -thick * 0.5f);
-            b.max = hinge + glm::vec3(width, height, thick * 0.5f);
+            glm::vec3 tip = hinge + glm::vec3(std::cos(base), 0.0f, -std::sin(base)) * width;
+            b.min = glm::min(hinge, tip) - glm::vec3(thick * 0.5f, 0.0f, thick * 0.5f);
+            b.max = glm::max(hinge, tip) + glm::vec3(thick * 0.5f, height, thick * 0.5f);
         } else {
             b.min = b.max = glm::vec3(0.0f, -100.0f, 0.0f);
         }
@@ -71,7 +73,8 @@ void Door::update(World& w, const std::vector<CharacterBody*>& bodies, float dt)
 
 Door::Touch Door::touch(const CharacterBody& b) const {
     Touch t;
-    glm::vec2 u(std::cos(angle), -std::sin(angle)), n(std::sin(angle), std::cos(angle));
+    const float a = angle + base;
+    glm::vec2 u(std::cos(a), -std::sin(a)), n(std::sin(a), std::cos(a));
     glm::vec2 p(b.pos.x - hinge.x, b.pos.z - hinge.z);
     float along = glm::dot(p, u);
     if (along < 0.1f || along > width + 0.15f) return t;
@@ -88,7 +91,7 @@ Door::Touch Door::touch(const CharacterBody& b) const {
 }
 
 void Door::addPanels(std::vector<RenderScene::Panel>& out) const {
-    glm::mat4 leaf = glm::translate(glm::mat4(1.0f), hinge) * glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0, 1, 0));
+    glm::mat4 leaf = glm::translate(glm::mat4(1.0f), hinge) * glm::rotate(glm::mat4(1.0f), angle + base, glm::vec3(0, 1, 0));
     auto part = [&](glm::vec3 c, glm::vec3 size, glm::vec3 col, int mat) {
         out.push_back({leaf * glm::translate(glm::mat4(1.0f), c) * glm::scale(glm::mat4(1.0f), size), col, mat});
     };

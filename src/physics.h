@@ -18,8 +18,13 @@ struct Ball {
     glm::vec3 color;
 };
 
+struct Terrain;
+
 struct World {
     float groundY = 0.0f;
+    const Terrain* terrain = nullptr; // relevo esculpido no editor (chão em cima do groundY)
+    // Chão em (x, z): o relevo, se houver, senão groundY.
+    float floorAt(float x, float z) const;
     std::vector<Box> boxes;
     std::vector<Ball> balls;
 
@@ -40,6 +45,10 @@ struct World {
     float groundHeightAt(float x, float z, float maxY) const;
 };
 
+constexpr float kGravity = 22.0f;
+constexpr float kJumpSpeed = 6.6f;
+constexpr float kStepHeight = 0.36f;
+
 // Controlador cinemático em cápsula (pés em pos).
 struct CharacterBody {
     glm::vec3 pos{0.0f};
@@ -47,6 +56,7 @@ struct CharacterBody {
     float radius = 0.30f;
     float height = 1.72f;
     float mass = 80.0f;
+    float jumpSpeed = kJumpSpeed; // correndo pula mais baixo e longo (tempo de voo do clipe de pulo)
     bool grounded = true;
 
     // eventos do último passo
@@ -63,8 +73,5 @@ private:
     bool jumpWasHeld_ = false;
 };
 
-constexpr float kGravity = 22.0f;
-constexpr float kJumpSpeed = 6.6f;
-constexpr float kStepHeight = 0.36f;
 
 void stepBalls(World& w, CharacterBody& ch, float dt);

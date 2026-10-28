@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "builder.h"
 #include "gun_tuning.h"
+#include "level.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -241,6 +242,18 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Gera a versão final em build-final/ga, sem o editor e sem este botão");
     ImGui::EndDisabled();
+    if (ImGui::Button("Edição livre", ImVec2(-1, 40 * g_scale))) action = Action::FreeEdit;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Câmera voando pelo cenário: seleciona e move tudo (G/R/S como no Blender), troca texturas e salva");
+    {   // cenário: o de teste (arena) ou o oficial (o do jogo final; a versão compilada usa sempre esse)
+        const char* names[SceneCount];
+        for (int i = 0; i < SceneCount; ++i) names[i] = sceneName(i);
+        int sc = gs.scene;
+        if (combo("Cenário", "##scene", &sc, names, SceneCount, "Troca na hora; a versão compilada usa sempre o oficial")) {
+            gs.scene = sc;
+            action = Action::ChangeScene;
+        }
+    }
 #endif
     ImGui::Dummy(ImVec2(0, 4 * g_scale));
 
@@ -541,6 +554,17 @@ EditorAction drawGunEditor(GunEditor& ed, const char* const* gunNames, const boo
     return action;
 }
 
+void drawPlayBanner() {
+    ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const char* t = "JOGANDO  -  Esc para parar e voltar ao editor";
+    ImVec2 ts = ImGui::CalcTextSize(t);
+    ImVec2 p((io.DisplaySize.x - ts.x) * 0.5f, 10 * g_scale);
+    dl->AddRectFilled(ImVec2(p.x - 14 * g_scale, p.y - 5 * g_scale), ImVec2(p.x + ts.x + 14 * g_scale, p.y + ts.y + 5 * g_scale),
+                      IM_COL32(20, 90, 30, 200), 6 * g_scale);
+    dl->AddText(p, IM_COL32(235, 255, 235, 255), t);
+}
+
 void drawBuildStatus() {
     builder::State st = builder::state();
     if (st == builder::State::Idle) return;
@@ -558,7 +582,7 @@ void drawBuildStatus() {
         const char* dots[] = {"", ".", "..", "..."};
         ImGui::TextColored(kAccent, "Compilando a versão final%s", dots[(int)(ImGui::GetTime() * 3) % 4]);
     } else if (st == builder::State::Ok) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1), "Versão final pronta:");
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1), "Jogo copiado para:");
         ImGui::TextWrapped("%s", builder::outputPath().c_str());
     } else {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.3f, 1), "A compilação falhou");

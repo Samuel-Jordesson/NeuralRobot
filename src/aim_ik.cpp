@@ -369,3 +369,10 @@ void applyCrouch(const Skeleton& sk, Pose& pose, float amount, float lean) {
     applyHandReach(sk, pose, r);
     pose.rot[NECK] = pose.rot[NECK] * eul(-lean * 0.9f, 0.0f, 0.0f); // continua olhando para frente
 }
+
+void applyHandTarget(const Skeleton& sk, Pose& pose, bool right, const glm::mat4& hand, float weight) {
+    if (weight <= 0.001f) return;
+    Pose p = pose;
+    armTo(sk, p, right, hand, right ? glm::vec3(-0.45f, -0.55f, -0.25f) : glm::vec3(0.45f, -0.55f, -0.25f));
+    pose = blendPose(pose, p, weight);
+}

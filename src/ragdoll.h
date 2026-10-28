@@ -21,12 +21,21 @@ public:
 
 private:
     struct Particle { glm::vec3 p, prev; float r; };
-    struct Stick { int a, b; float len; bool minOnly; float scale; };
+    struct Stick {
+        int a, b;
+        float len;
+        bool minOnly;
+        float scale;
+        bool tone = false; // "músculo": segura a forma de quando morreu e vai soltando
+    };
     void addStick(int a, int b, bool minOnly = false, float scale = 1.0f);
+    void hinges();       // joelho dobra só para frente, cotovelo só para trás
+    void selfCollide();  // braços, pernas e tronco não se atravessam
 
     bool active_ = false;
     std::vector<Particle> parts_;
     std::vector<Stick> sticks_;
+    std::vector<std::pair<int, int>> pairs_; // pares que se repelem (partes diferentes do corpo)
     std::vector<glm::vec3> rest_; // posições na pose neutra (espaço do modelo)
     glm::mat4 model_{1.0f}, invModel_{1.0f};
     float time_ = 0.0f;

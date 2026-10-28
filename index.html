@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eleição da Pelada de TI</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      background: #101827;
+      color: #f8fafc;
+    }
+
+    main {
+      max-width: 760px;
+      margin: auto;
+    }
+
+    h1 { text-align: center; }
+    .subtitulo {
+      text-align: center;
+      color: #aebbd0;
+    }
+
+    .painel {
+      background: #1e293b;
+      padding: 22px;
+      border-radius: 14px;
+      margin: 18px 0;
+    }
+
+    input {
+      width: 100%;
+      padding: 13px;
+      margin: 10px 0;
+      border-radius: 8px;
+      border: 1px solid #64748b;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 12px 16px;
+      margin: 5px 4px 5px 0;
+      border: 0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .felipe { background: #2563eb; color: white; }
+    .luis { background: #ea580c; color: white; }
+    .nulo { background: #64748b; color: white; }
+    .transparencia { background: #16a34a; color: white; }
+    .resenha { background: #facc15; color: #172033; }
+    .encerrar { background: #dc2626; color: white; }
+
+    .placar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .numero {
+      background: #0f172a;
+      border-radius: 10px;
+      padding: 15px 8px;
+      text-align: center;
+    }
+
+    .numero strong {
+      display: block;
+      font-size: 28px;
+      margin-top: 8px;
+    }
+
+    #mensagem { min-height: 24px; }
+    #relatorio { line-height: 1.8; }
+
+    .aviso {
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+
+    @media (max-width: 480px) {
+      body { padding: 12px; }
+      .placar { grid-template-columns: 1fr; }
+      button { width: 100%; margin: 5px 0; }
+    }
+
+    @media print {
+      body {
+        background: white;
+        color: black;
+        padding: 0;
+      }
+
+      .nao-imprimir { display: none !important; }
+
+      .painel, .numero {
+        background: white;
+        color: black;
+        border: 1px solid #ccc;
+      }
+
+      main { max-width: 100%; }
+    }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>⚽ Eleição da Pelada de TI</h1>
+  <p class="subtitulo">
+    Quem merece o prêmio de melhor jogador?
+  </p>
+
+  <section class="painel nao-imprimir">
+    <h2>Registrar voto</h2>
+
+    <label for="participante">Nome do participante:</label>
+    <input
+      id="participante"
+      type="text"
+      maxlength="60"
+      placeholder="Digite seu nome"
+      autocomplete="off"
+    >
+
+    <button class="felipe" onclick="votar('Felipe')">
+      Votar no Felipe
+    </button>
+
+    <button class="luis" onclick="votar('Luis')">
+      Votar no Luis
+    </button>
+
+    <button class="nulo" onclick="votar('Nulo')">
+      Voto nulo
+    </button>
+
+    <p id="mensagem" role="status"></p>
+    <p id="status">Votação aberta.</p>
+  </section>
+
+  <section class="painel">
+    <h2>Apuração oficial</h2>
+
+    <div class="placar">
+      <div class="numero">
+        Luis
+        <strong id="totalLuis">0</strong>
+      </div>
+
+      <div class="numero">
+        Felipe
+        <strong id="totalFelipe">0</strong>
+      </div>
+
+      <div class="numero">
+        Nulos
+        <strong id="totalNulos">0</strong>
+      </div>
+    </div>
+
+    <p>Total de votos: <strong id="totalGeral">0</strong></p>
+
+    <div class="nao-imprimir">
+      <button class="transparencia" onclick="transparencia()">
+        TRANSPARÊNCIA — Imprimir relatório
+      </button>
+
+      <button class="resenha" onclick="modoResenha()">
+        😈 MODO RESENHA
+      </button>
+
+      <button class="encerrar" onclick="encerrarVotacao()">
+        Encerrar votação
+      </button>
+    </div>
+  </section>
+
+  <section class="painel" id="areaRelatorio" hidden>
+    <h2 id="tituloRelatorio">Relatório de transparência</h2>
+    <div id="relatorio"></div>
+
+    <button class="nao-imprimir" onclick="window.print()">
+      Imprimir / Salvar em PDF
+    </button>
+  </section>
+
+  <p class="aviso nao-imprimir">
+    Protótipo local para demonstração. Os dados ficam na memória
+    desta página e serão perdidos ao recarregá-la. Para uma eleição
+    real, será necessário armazenamento persistente e controles
+    adicionais de segurança e auditoria.
+  </p>
+</main>
+
+<script>
+  // Fonte oficial dos votos desta sessão.
+  const votos = [];
+  const participantes = new Set();
+  let votacaoAberta = true;
+
+  function normalizarNome(nome) {
+    return nome.trim().toLocaleLowerCase('pt-BR');
+  }
+
+  function votar(candidato) {
+    const campo = document.getElementById('participante');
+    const nome = campo.value.trim();
+    const mensagem = document.getElementById('mensagem');
+
+    if (!votacaoAberta) {
+      mensagem.textContent = 'A votação já foi encerrada.';
+      return;
+    }
+
+    if (!nome) {
+      mensagem.textContent = 'Digite seu nome antes de votar.';
+      campo.focus();
+      return;
+    }
+
+    const chave = normalizarNome(nome);
+
+    if (participantes.has(chave)) {
+      mensagem.textContent = 'Este nome já registrou um voto.';
+      return;
+    }
+
+    votos.push({
+      participante: nome,
+      candidato: candidato,
+      horario: new Date().toISOString()
+    });
+
+    participantes.add(chave);
+    campo.value = '';
+
+    mensagem.textContent = 'Voto registrado com sucesso!';
+    atualizarPlacar();
+  }
+
+  function contarVotos() {
+    const resultado = {
+      Luis: 0,
+      Felipe: 0,
+      Nulo: 0
+    };
+
+    for (const voto of votos) {
+      resultado[voto.candidato]++;
+    }
+
+    return resultado;
+  }
+
+  function atualizarPlacar() {
+    const resultado = contarVotos();
+
+    document.getElementById('totalLuis').textContent =
+      resultado.Luis;
+
+    document.getElementById('totalFelipe').textContent =
+      resultado.Felipe;
+
+    document.getElementById('totalNulos').textContent =
+      resultado.Nulo;
+
+    document.getElementById('totalGeral').textContent =
+      votos.length;
+  }
+
+  function encerrarVotacao() {
+    if (!votacaoAberta) return;
+
+    if (!confirm('Deseja encerrar a votação?')) return;
+
+    votacaoAberta = false;
+
+    document.getElementById('status').textContent =
+      'Votação encerrada.';
+
+    document.querySelectorAll(
+      '.nao-imprimir button.felipe, ' +
+      '.nao-imprimir button.luis, ' +
+      '.nao-imprimir button.nulo'
+    ).forEach(botao => botao.disabled = true);
+
+    document.getElementById('mensagem').textContent =
+      'A apuração está fechada.';
+
+    transparencia();
+  }
+
+  function mostrarRelatorio(titulo, conteudo) {
+    document.getElementById('tituloRelatorio').textContent = titulo;
+    document.getElementById('relatorio').replaceChildren();
+
+    for (const linha of conteudo) {
+      const paragrafo = document.createElement('p');
+      paragrafo.textContent = linha;
+      document.getElementById('relatorio').appendChild(paragrafo);
+    }
+
+    document.getElementById('areaRelatorio').hidden = false;
+    document.getElementById('areaRelatorio').scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    });
+  }
+
+  function transparencia() {
+    const r = contarVotos();
+    const total = votos.length;
+
+    const percentual = n =>
+      total ? (n * 100 / total).toFixed(1) + '%' : '0,0%';
+
+    mostrarRelatorio('Relatório oficial de transparência', [
+      'Eleição da Pelada de TI',
+      'Situação: ' + (votacaoAberta ? 'Em andamento' : 'Encerrada'),
+      'Votos no Luis: ' + r.Luis + ' (' + percentual(r.Luis) + ')',
+      'Votos no Felipe: ' + r.Felipe + ' (' + percentual(r.Felipe) + ')',
+      'Votos nulos: ' + r.Nulo + ' (' + percentual(r.Nulo) + ')',
+      'Total de votos registrados: ' + total,
+      'Conferência: Luis + Felipe + nulos = ' +
+        (r.Luis + r.Felipe + r.Nulo)
+    ]);
+  }
+
+  function modoResenha() {
+    const r = contarVotos();
+
+    // Simulação: a cada dois votos do Felipe,
+    // um voto é transferido simbolicamente para Luis.
+    // Os votos oficiais NÃO são modificados.
+    const transferidos = Math.floor(r.Felipe / 2);
+
+    const luisSimulado = r.Luis + transferidos;
+    const felipeSimulado = r.Felipe - transferidos;
+
+    mostrarRelatorio('😈 MODO RESENHA — SIMULAÇÃO', [
+      'ATENÇÃO: isto não é o resultado oficial.',
+      'Votos oficiais no Luis: ' + r.Luis,
+      'Votos oficiais no Felipe: ' + r.Felipe,
+      'Votos nulos oficiais: ' + r.Nulo,
+      'Votos simbolicamente transferidos: ' + transferidos,
+      'Luis na simulação: ' + luisSimulado,
+      'Felipe na simulação: ' + felipeSimulado,
+      'Nulos: ' + r.Nulo,
+      'A apuração oficial permanece inalterada.'
+    ]);
+  }
+</script>
+</body>
+</html>

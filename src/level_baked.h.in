@@ -1,0 +1,3 @@
+#pragma once
+// Gerado pelo CMake a partir de levels/oficial.txt (versão final, sem editor).
+static const char* kBakedOfficialLevel = R"GALVL(@GA_OFFICIAL_LEVEL@)GALVL";

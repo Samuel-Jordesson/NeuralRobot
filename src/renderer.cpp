@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "terrain.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
@@ -147,7 +148,8 @@ struct GpuProfiler {
 GpuProfiler g_prof;
 
 // unidades de textura fixas usadas pela iluminação
-enum TexUnit { kUnitIrradiance = 4, kUnitEnv = 5, kUnitAO = 6, kUnitShadow = 7, kUnitSkyCube = 8, kUnitNoise = 9 };
+enum TexUnit { kUnitIrradiance = 4, kUnitEnv = 5, kUnitAO = 6, kUnitShadow = 7, kUnitSkyCube = 8, kUnitNoise = 9,
+               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12 };
 
 // Textura de ruído que repete sem emenda (256x256), lida pelos shaders no lugar de ruído procedural:
 // R = fbm grande (4 células), G = ruído médio (32), B = ruído fino (128), A = fbm (8 células).
@@ -233,6 +235,10 @@ bool Renderer::init(const std::string& dir, int width, int height) {
         sh->set("uShadowMap", (int)kUnitShadow);
         sh->set("uSkyCube", (int)kUnitSkyCube);
         sh->set("uNoise", (int)kUnitNoise);
+        sh->set("uPaintWeights", (int)kUnitPaintW);
+        sh->set("uPaintAlbedo", (int)kUnitPaintA);
+        sh->set("uPaintNormal", (int)kUnitPaintN);
+        sh->set("uPaintOn", 0);
     }
 
     cube_ = makeCube();
@@ -613,7 +619,20 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
     sh.set("uModel", model);
     sh.setMat4Array("uBones", bones, BONE_COUNT);
     if (!material) {
-        m.draw();
+        if (!m.hasAlphaCut) {
+            m.draw();
+            return;
+        }
+        // sombra/profundidade de folhagem: só o recorte da textura
+        sh.set("uBaseTex", 0);
+        glActiveTexture(GL_TEXTURE0);
+        for (size_t i = 0; i < m.parts.size(); ++i) {
+            const CharacterModel::Material& mat = m.materials[m.parts[i].material];
+            sh.set("uAlphaCut", mat.alphaCut ? 1 : 0);
+            glBindTexture(GL_TEXTURE_2D, mat.texBase);
+            m.drawPart(i);
+        }
+        sh.set("uAlphaCut", 0);
         return;
     }
     sh.set("uBaseTex", 0);
@@ -634,6 +653,7 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
         glBindTexture(GL_TEXTURE_2D, mat.texEmissive);
         sh.set("uEmissive", mat.emissiveFactor);
         sh.set("uUseAO", mat.useOcclusion ? 1 : 0);
+        sh.set("uAlphaCut", mat.alphaCut ? 1 : 0);
         m.drawPart(i);
     }
 }
@@ -645,19 +665,54 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
     }
+    // pintura do chão (só no passo de cor)
+    const bool painted = color && s.paint && s.paint->active && s.paint->weightTex && s.paint->albedoArr;
+    if (painted) {
+        glActiveTexture(GL_TEXTURE0 + kUnitPaintW);
+        glBindTexture(GL_TEXTURE_2D, s.paint->weightTex);
+        glActiveTexture(GL_TEXTURE0 + kUnitPaintA);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s.paint->albedoArr);
+        glActiveTexture(GL_TEXTURE0 + kUnitPaintN);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s.paint->normalArr);
+        glActiveTexture(GL_TEXTURE0);
+    }
+    auto paintUniforms = [&](Shader& sh) {
+        sh.set("uPaintOn", painted ? 1 : 0);
+        if (!painted) return;
+        const GroundPaint& p = *s.paint;
+        sh.set("uPaintRect", glm::vec4(p.origin.x, p.origin.y, 1.0f / p.size, 0.0f));
+        glm::vec4 tile(2.0f);
+        for (int i = 0; i < (int)p.layers.size() && i < 4; ++i) tile[i] = p.layers[i].tile;
+        sh.set("uPaintTile", tile);
+        sh.set("uPaintCount", (int)std::min<size_t>(p.layers.size(), 4));
+    };
     worldSh.use();
     worldSh.set("uViewProj", vp);
-    if (color) setLightingUniforms(worldSh, s);
+    if (color) { setLightingUniforms(worldSh, s); paintUniforms(worldSh); }
     drawWorld(worldSh, s, pass);
+    if (s.terrain && s.terrain->active) { // relevo (na frente do chão plano)
+        worldSh.set("uModel", glm::mat4(1.0f));
+        if (color) worldSh.set("uMaterial", 5);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -2.0f);
+        s.terrain->draw();
+        glDisable(GL_POLYGON_OFFSET_FILL);
+    }
     glDisable(GL_CULL_FACE); // materiais double-sided
     skinSh.use();
     skinSh.set("uViewProj", vp);
     if (color) {
         setLightingUniforms(skinSh, s);
+        paintUniforms(skinSh);
         skinSh.set("uDebug", s.debugWeights ? 1 : 0);
     }
     if (color) skinSh.set("uDebug", 0);
-    for (const RenderScene::Prop& p : s.props) drawSkinned(skinSh, *p.mesh, p.model, identityBones_, color);
+    for (const RenderScene::Prop& p : s.props) {
+        if (!p.mesh) continue;
+        if (painted) skinSh.set("uPaintOn", p.mesh->hasAlphaCut ? 0 : 1); // folhagem não recebe a pintura
+        drawSkinned(skinSh, *p.mesh, p.model, identityBones_, color);
+    }
+    if (color) skinSh.set("uPaintOn", 0); // personagens e armas não recebem a pintura do chão
     if (color) skinSh.set("uDebug", s.debugWeights ? 1 : 0);
     drawSkinned(skinSh, *s.character, s.characterModel, s.bones, color);
     if (color) skinSh.set("uDebug", 0);
@@ -758,7 +813,10 @@ void Renderer::drawHud(const RenderScene& s) {
         hud_.set("uAlpha", s.crosshairAlpha);
         // mira acompanha o tamanho da janela (16 px numa janela de 900 de altura)
         float size = std::round(std::clamp(h_ / 900.0f * 16.0f, 10.0f, 40.0f));
-        hud_.set("uRect", glm::vec4(std::round(w_ * 0.5f - size * 0.5f), std::round(h_ * 0.5f - size * 0.5f), size, size));
+        // centro da imagem (no editor o jogo fica na vista, fora do centro da janela)
+        glm::vec4 cc = s.proj * glm::vec4(0.0f, 0.0f, -1.0f, 1.0f);
+        glm::vec2 ctr((cc.x / cc.w * 0.5f + 0.5f) * w_, (0.5f - cc.y / cc.w * 0.5f) * h_);
+        hud_.set("uRect", glm::vec4(std::round(ctr.x - size * 0.5f), std::round(ctr.y - size * 0.5f), size, size));
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
     if (s.promptAlpha > 0.01f) {

@@ -67,6 +67,15 @@ void main() {
         albedo *= 1.0 - 0.5 * joint;
         rough = clamp(0.86 + 0.08 * mid - 0.22 * stain + 0.05 * joint, 0.4, 1.0);
         N = bumpNormal(N, vec3(1, 0, 0), vec3(0, 0, 1), p, 1.0);
+    } else if (uMaterial == 5) {
+        // terreno: terra com manchas de grama seca (a pintura do editor vai por cima)
+        vec2 p = vPos.xz;
+        float big = texture(uNoise, p / 40.0).r, mid = texture(uNoise, p * (1.7 / 32.0)).g, fine = texture(uNoise, p * (13.0 / 128.0)).b;
+        vec3 dirt = vec3(0.30, 0.24, 0.17) * (0.8 + 0.4 * mid);
+        vec3 grass = vec3(0.22, 0.27, 0.12) * (0.8 + 0.4 * fine);
+        albedo = mix(dirt, grass, smoothstep(0.45, 0.7, big)) * (0.9 + 0.2 * fine);
+        rough = 0.92;
+        N = bumpNormal(N, vec3(1, 0, 0), vec3(0, 0, 1), p, 1.4);
     } else if (uMaterial == 1) {
         // bloco de concreto pintado: cor do bloco + sujeira na base + quinas gastas
         vec3 an = abs(N);
@@ -101,6 +110,7 @@ void main() {
         rough = 0.38 + 0.1 * texture(uNoise, l.xz * (20.0 / 128.0)).b;
     }
 
+    applyPaint(vPos, normalize(vNormal), albedo, N, rough);
     vec3 col = shadePBR(albedo, metal, rough, 1.0, N, vPos);
     FragColor = vec4(col, 1.0);
 }

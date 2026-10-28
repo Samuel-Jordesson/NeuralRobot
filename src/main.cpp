@@ -9,14 +9,22 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include <imgui.h>
+
 #include "aim_ik.h"
 #include "builder.h"
 #include "gun_tuning.h"
+#include "free_editor.h"
+#include "level.h"
+#if !GA_EDITOR
+#include "level_baked.h"
+#endif
 #include "animation.h"
 #include "arena.h"
 #include "character_model.h"
@@ -33,12 +41,17 @@
 #include "skeleton.h"
 #include "soldiers.h"
 #include "table.h"
+#include "terrain.h"
 #include "weapon.h"
 
 namespace {
 
 float g_scroll = 0.0f;
-void scrollCallback(GLFWwindow*, double, double y) { g_scroll += (float)y; }
+void scrollCallback(GLFWwindow* w, double x, double y) {
+    g_scroll += (float)y;
+    (void)w;
+    if (ImGui::GetCurrentContext()) ImGui::GetIO().AddMouseWheelEvent((float)x, (float)y); // painéis e editor
+}
 
 float wrapAngle(float a) {
     while (a > (float)M_PI) a -= 2.0f * (float)M_PI;
@@ -88,7 +101,7 @@ struct ThirdPersonCamera {
         float hit = w.raycast(pivot, dir, len + 0.25f);
         float actual = std::max(0.3f, std::min(len, hit - 0.25f));
         pos = pivot + dir * actual;
-        pos.y = std::max(pos.y, w.groundY + 0.15f);
+        pos.y = std::max(pos.y, w.floorAt(pos.x, pos.z) + 0.15f);
         view = glm::lookAt(pos, pos + forward, glm::vec3(0, 1, 0));
     }
 
@@ -119,6 +132,8 @@ struct Args {
     std::vector<std::pair<std::string, std::string>> gfx; // --gfx chave=valor
     int preset = -1;
     bool menu = false;  // desenha o menu de pausa na foto
+    int scene = -1;     // --scene N: cenário (0 = teste/arena, 1 = oficial)
+    bool freeEdit = false; // --freeedit: abre já na edição livre do cenário
     int bench = 0;      // renderiza N quadros e mede o tempo
     bool holster = false;       // todas as armas guardadas no corpo
     int weapon = 0;             // arma usada por --gun/--aim/--act: 0 pistola, 1 AK-47, 2 AK-12
@@ -126,6 +141,7 @@ struct Args {
     float actTime = 0.0f;
     float npcTime = 0.0f;       // simula os soldados por esse tempo antes da foto
     bool doorOpen = false;      // porta da arena aberta na foto
+    bool vaultTest = false;     // imprime o que o parkour faria em alguns pontos do mapa
     int killNpc = 0;            // mata os N primeiros soldados (testar a queda)
     const char* coverClip = nullptr; // low | stand: pose do clipe de cobertura (--coverclip tipo lado fase)
     int coverClipSide = 0;
@@ -175,6 +191,8 @@ Args parseArgs(int argc, char** argv) {
             if (eq != std::string::npos) a.gfx.push_back({kv.substr(0, eq), kv.substr(eq + 1)});
         } else if (!std::strcmp(argv[i], "--preset")) a.preset = std::atoi(next());
         else if (!std::strcmp(argv[i], "--menu")) a.menu = true;
+        else if (!std::strcmp(argv[i], "--scene")) a.scene = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--freeedit")) a.freeEdit = a.menu = true;
         else if (!std::strcmp(argv[i], "--bench")) a.bench = std::atoi(next());
         else if (!std::strcmp(argv[i], "--holster")) a.holster = true;
         else if (!std::strcmp(argv[i], "--weapon")) a.weapon = std::atoi(next());
@@ -184,6 +202,7 @@ Args parseArgs(int argc, char** argv) {
         }
         else if (!std::strcmp(argv[i], "--npc")) a.npcTime = (float)std::atof(next());
         else if (!std::strcmp(argv[i], "--door")) a.doorOpen = true;
+        else if (!std::strcmp(argv[i], "--vaulttest")) a.vaultTest = true;
         else if (!std::strcmp(argv[i], "--coverclip")) {
             a.coverClip = next();
             a.coverClipSide = std::atoi(next());
@@ -218,6 +237,9 @@ void printControls() {
 
 int main(int argc, char** argv) {
     Args args = parseArgs(argc, argv);
+#if GA_EDITOR
+    if (argc == 1) args.freeEdit = args.menu = true; // versão de desenvolvimento abre no editor
+#endif
     const bool shotMode = args.shot != nullptr;
 
     // No Wayland o GLFW carrega o libdecor-gtk, que aborta no GNOME novo; e o GLEW
@@ -250,7 +272,16 @@ int main(int argc, char** argv) {
     }
     std::printf("[gl] %s | %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
 
-    const std::string root = GA_ROOT;
+    std::string root = GA_ROOT;
+#if !GA_EDITOR
+    // jogo copiado pelo Compilar: os arquivos ficam junto do executável
+    {
+        std::error_code ec;
+        std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec && std::filesystem::exists(exe.parent_path() / "shaders", ec)) root = exe.parent_path().string();
+    }
+#endif
+    std::printf("[jogo] arquivos em %s\n", root.c_str());
     Skeleton skeleton = Skeleton::makeCrashDummy();
     CharacterModel character;
     if (!character.load(root + "/crash_dummy.glb", &skeleton, {})) return 1;
@@ -290,17 +321,27 @@ int main(int argc, char** argv) {
     glfwSwapInterval(gfx.vsync ? 1 : 0);
     cam.baseFov = gfx.fov;
 
-    World world = World::makeTestMap();
-    // arena murada com porta e soldados (russian_soldier.glb) com AK-47
-    Arena arena = Arena::build(world);
+    // cenário: no editor o escolhido no menu (ou --scene); a versão final é sempre a oficial
+#if GA_EDITOR
+    const int startScene = std::clamp(args.scene >= 0 ? args.scene : gfx.scene, 0, SceneCount - 1);
+#else
+    const int startScene = SceneOfficial;
+#endif
+    World world;
+    Arena arena;              // área de combate: porta, inimigos (no teste é a arena murada)
+    std::vector<Table> tables; // só no cenário de teste
+    Terrain terrain;          // relevo e pintura do chão do cenário atual (editor)
+    GroundPaint paint;
+    int paintScene = -1;      // cenário de onde vieram (só recarrega ao trocar de cenário)
+    AssetLibrary assets;      // modelos postos no cenário pelo editor
+    assets.root = root;
+    assets.loadConfig();
+    OfficialLevel official;   // carregado quando o cenário oficial é usado
+    int sceneId = -1;
     SoldierAssets soldierAssets;
     if (!soldierAssets.load(root)) return 1;
     Squad squad;
-    squad.init(&soldierAssets, defs[1], arena.spawns, arena.spawnYaw);
     Weapon enemyFx; // tiros dos soldados
-    // mesas com as armas em cima (pistola e AK-47 na primeira, AK-12 na segunda)
-    std::vector<Table> tables = {{glm::vec3(2.2f, 0.0f, 3.0f), 1}, {glm::vec3(4.3f, 0.0f, 3.0f), 1}};
-    for (const Table& t : tables) t.addColliders(world);
     CharacterBody body;
     // Captura de movimento (Mixamo) convertida para o esqueleto do boneco
     MocapClip walkClip, runClip;
@@ -312,6 +353,38 @@ int main(int argc, char** argv) {
     loadMixamoClip(root + "/animation-teste/Right Cover Sneak.fbx", skeleton, coverStand[1]);
     loadMixamoClip(root + "/animation-teste/Crouched Sneaking Left.fbx", skeleton, coverLow[0]);
     loadMixamoClip(root + "/animation-teste/Crouched Sneaking Right.fbx", skeleton, coverLow[1]);
+    // parkour: pulo correndo (Running Jump) e salto por cima de obstáculos (Jumping)
+    MocapClip runJumpClip, vaultClip;
+    loadMixamoClip(root + "/animation-teste/parkur/Running Jump.fbx", skeleton, runJumpClip);
+    loadMixamoClip(root + "/animation-teste/parkur/Jumping.fbx", skeleton, vaultClip);
+    // pulo correndo: quem sobe é a física, então o clipe fica com o pé mais baixo sempre na altura
+    // do chão do modelo (mantém o agachar da saída e da chegada, tira a subida)
+    if (runJumpClip.valid()) {
+        const float ankle = skeleton.joint[FOOT_L].y;
+        for (Pose& p : runJumpClip.frames) {
+            glm::mat4 g[BONE_COUNT];
+            computeGlobals(skeleton, p, g);
+            p.rootOffset.y -= std::max(0.0f, std::min(g[FOOT_L][3].y, g[FOOT_R][3].y) - ankle);
+        }
+    }
+    // quadros do clipe: pé sai do chão / volta ao chão (medidos no arquivo)
+    const float kRunJumpTakeoff = 3.0f, kRunJumpLand = 17.5f; // Running Jump (27 quadros)
+    const float kVaultTakeoff = 10.5f;                         // Jumping (35 quadros)
+    // entrar/sair da cobertura (tocam uma vez): [0] = em pé, [1] = agachado
+    MocapClip coverIn[2], coverOut[2];
+    {
+        const std::string dir = root + "/animation-teste/cover saindo e entrando/";
+        loadMixamoClip(dir + "entrando no cover em pe.fbx", skeleton, coverIn[0]);
+        loadMixamoClip(dir + "entrando no cover abaixado.fbx", skeleton, coverIn[1]);
+        loadMixamoClip(dir + "saindo do cover em pe.fbx", skeleton, coverOut[0]);
+        loadMixamoClip(dir + "saindo do cover abaixado.fbx", skeleton, coverOut[1]);
+        // a pose de costas para a parede fica olhando para +Z (como no jogo): último quadro do
+        // "entrando" e primeiro do "saindo"
+        for (MocapClip* c : {&coverIn[0], &coverIn[1]})
+            if (c->valid()) rotateClip(*c, -poseYaw(c->frames.back()));
+        for (MocapClip* c : {&coverOut[0], &coverOut[1]})
+            if (c->valid()) rotateClip(*c, -poseYaw(c->frames.front()));
+    }
     // costas retas na parede (o Mixamo vem com o peito um pouco girado) e as fases em que dá para
     // parar: os dois pés no chão com a abertura de quem está parado
     std::vector<float> coverIdle[4];
@@ -350,20 +423,6 @@ int main(int argc, char** argv) {
     // as armas deitadas perto da borda virada para o início; os fuzis com o cano para a esquerda,
     // a coronha correndo junto da borda (tudo em cima do tampo)
     Loadout loadout;
-    {
-        const struct { int table; float across, along, turn; } spots[3] = {
-            {0, 0.80f, 0.45f, glm::radians(20.0f)},  // pistola
-            {0, 0.60f, -0.72f, glm::radians(75.0f)}, // AK-47
-            {1, 0.60f, -0.65f, glm::radians(75.0f)}, // AK-12
-        };
-        for (int i = 0; i < 3; ++i) {
-            const Table& t = tables[spots[i].table];
-            GunItem it;
-            it.def = defs[i];
-            it.placeOnTable(t.topPoint(spots[i].across, spots[i].along), t.facingFromPlusX(), spots[i].turn, t.pos.y);
-            loadout.items.push_back(it);
-        }
-    }
     GunHandling handling;
     float charYaw = 0.0f;
     float visualY = 0.0f; // altura do corpo na tela (suaviza os degraus da cápsula)
@@ -377,7 +436,97 @@ int main(int argc, char** argv) {
     scene.bones = skin;
     scene.weapon = &weapon;
     scene.enemyWeapon = &enemyFx;
-    for (const Table& t : tables) scene.props.push_back({&tableMesh, t.model()});
+
+    // Layout de cada cenário (editor livre): de fábrica + o salvo em levels/; a versão final usa o
+    // layout oficial embutido no executável.
+    LevelLayout layouts[SceneCount];
+    defaultTestLayout(layouts[SceneTest]);
+    defaultOfficialLayout(layouts[SceneOfficial]);
+#if GA_EDITOR
+    for (int i = 0; i < SceneCount; ++i)
+        if (layouts[i].load(root + "/" + sceneFile(i))) std::printf("[cenario] layout carregado de %s\n", sceneFile(i));
+#else
+    layouts[SceneOfficial].parse(kBakedOfficialLevel);
+#endif
+
+    // Monta um cenário: mundo (colisões), objetos, área de combate, armas e o jogador no começo.
+    auto setupScene = [&](int id) {
+        if (id == SceneOfficial && !official.load(root, layouts[SceneOfficial])) {
+            std::fprintf(stderr, "[cenario] falha ao carregar o cenario oficial; usando o de teste\n");
+            id = SceneTest;
+        }
+        sceneId = id;
+        LevelLayout& L = layouts[id];
+        scene.props.clear();
+        if (id == SceneTest) {
+            // mapa de blocos, arena com porta e soldados (russian_soldier.glb) com AK-47, mesas com armas
+            arena = buildTestScene(world, L, tables);
+            for (const Table& t : tables) scene.props.push_back({&tableMesh, t.model()});
+        } else {
+            tables.clear();
+            arena = official.build(world, scene.props, L);
+            for (auto& [i, b] : L.boxes) // caixas visíveis movidas no editor livre (batente da porta)
+                if (i >= 0 && i < (int)world.boxes.size() && !world.boxes[i].hidden) { world.boxes[i].min = b.first; world.boxes[i].max = b.second; }
+        }
+        assets.build(world, scene.props, L); // objetos arrastados do navegador de conteúdo
+        if (paintScene != id) { // relevo e pintura salvos do cenário
+            paintScene = id;
+            terrain.release();
+            paint.release();
+            if (L.terrainOn) {
+                terrain.origin = L.terrainOrigin;
+                terrain.size = L.terrainSize;
+                terrain.n = L.terrainN;
+                if (!terrain.load(root + "/" + sceneTerrainFile(id))) terrain.create(L.terrainOrigin + glm::vec2(L.terrainSize * 0.5f), L.terrainSize, L.terrainN, 0.0f);
+            }
+            if (L.paintOn) {
+                paint.create(L.paintOrigin, L.paintSize, L.paintRes);
+                for (const LevelLayout::PaintLayer& pl : L.paintLayers) paint.layers.push_back({pl.albedo, pl.normal, pl.tile});
+                paint.uploadLayers(root);
+                paint.loadWeights(root + "/" + scenePaintFile(id));
+            }
+        }
+        world.terrain = &terrain;
+        scene.terrain = &terrain;
+        scene.paint = &paint;
+        const glm::vec3 start = L.start;
+        const float startYaw = L.startYaw;
+        // armas: no teste em cima das mesas, perto da borda virada para o início (os fuzis com o cano
+        // para a esquerda); no oficial no chão, perto de onde o personagem acorda
+        loadout = Loadout();
+        const struct { int table; float across, along, turn; } spots[3] = {
+            {0, 0.80f, 0.45f, glm::radians(20.0f)},  // pistola
+            {0, 0.60f, -0.72f, glm::radians(75.0f)}, // AK-47
+            {1, 0.60f, -0.65f, glm::radians(75.0f)}, // AK-12
+        };
+        for (int i = 0; i < 3; ++i) {
+            GunItem it;
+            it.def = defs[i];
+            if (auto g = L.guns.find(i); g != L.guns.end()) {
+                it.drop(g->second.first, g->second.second); // posta no editor
+            } else if (id == SceneTest && (int)tables.size() > spots[i].table) {
+                const Table& t = tables[spots[i].table];
+                it.placeOnTable(t.topPoint(spots[i].across, spots[i].along), t.facingFromPlusX(), spots[i].turn, t.pos.y);
+            } else {
+                glm::vec3 fwd(std::sin(startYaw), 0.0f, std::cos(startYaw)), right(-fwd.z, 0.0f, fwd.x);
+                it.drop(start + fwd * 1.2f + right * (0.6f * (i - 1)), startYaw + 1.3f);
+            }
+            loadout.items.push_back(it);
+        }
+        squad.init(&soldierAssets, defs[1], arena.spawns, arena.spawnYaw);
+        handling = GunHandling();
+        weapon = Weapon();
+        enemyFx = Weapon();
+        body = CharacterBody();
+        body.pos = start;
+        charYaw = startYaw;
+        cam.yaw = startYaw; // câmera atrás do personagem, olhando para onde ele começa virado
+        visualY = start.y;
+        footIK.reset();
+        renderer.resetExposure();
+        std::printf("[cenario] %s\n", sceneName(id));
+    };
+    setupScene(startScene);
 
     // onde cada arma está agora: na mão, no corpo ou deitada (mesa/chão). Espaço canônico -> mundo.
     auto gunMatrix = [&](int i, const glm::mat4& charModel) {
@@ -528,8 +677,17 @@ int main(int argc, char** argv) {
         auto poseWithGun = [&](float recoil) {
             Pose p = pose;
             if (args.coverClip) {
-                const MocapClip& c = (!std::strcmp(args.coverClip, "low") ? coverLow : coverStand)[args.coverClipSide & 1];
-                if (c.valid()) p = c.sample(args.coverClipPhase);
+                std::string k = args.coverClip;
+                if (k == "low" || k == "stand") {
+                    const MocapClip& c = (k == "low" ? coverLow : coverStand)[args.coverClipSide & 1];
+                    if (c.valid()) p = c.sample(args.coverClipPhase);
+                } else if (k == "runjump" || k == "vault") { // parkour (fase 0..1)
+                    const MocapClip& c = k == "vault" ? vaultClip : runJumpClip;
+                    if (c.valid()) p = c.frames[(size_t)(std::clamp(args.coverClipPhase, 0.0f, 1.0f) * (c.frames.size() - 1))];
+                } else { // in / out / inlow / outlow: quadro da transição (fase 0..1)
+                    const MocapClip& c = (k.rfind("in", 0) == 0 ? coverIn : coverOut)[k.find("low") != std::string::npos];
+                    if (c.valid()) p = c.frames[(size_t)std::clamp(args.coverClipPhase, 0.0f, 1.0f) * (c.frames.size() - 1)];
+                }
             }
             applyCrouch(skeleton, p, args.crouch, args.crouch * 0.8f);
             if (loadout.hand >= 0) applyShoulderPush(p, shotTouch.weight);
@@ -568,6 +726,7 @@ int main(int argc, char** argv) {
         // --npc T: simula os soldados por T segundos com o jogador parado em --pos
         for (float t = 0.0f; t < args.npcTime; t += 1.0f / 60.0f) {
             arena.door.update(world, squad.aliveBodies(), 1.0f / 60.0f);
+            for (Door& d : arena.extraDoors) d.update(world, squad.aliveBodies(), 1.0f / 60.0f);
             squad.update(world, {args.pos, glm::vec3(0.0f), true}, enemyFx, 1.0f / 60.0f);
             enemyFx.update(world, t + 1.0f / 60.0f < args.npcTime ? 1.0f / 60.0f : 0.0f);
         }
@@ -583,6 +742,7 @@ int main(int argc, char** argv) {
         scene.panels.clear();
         squad.addToScene(scene, gunMeshes[1]);
         arena.door.addPanels(scene.panels);
+        for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
         scene.view = cam.view;
         scene.proj = glm::perspective(fovy, (float)fbw / fbh, 0.05f, 1000.0f);
         scene.camPos = cam.pos;
@@ -639,6 +799,7 @@ int main(int argc, char** argv) {
     bool f1Was = false, f2Was = false, escWas = false, eWas = false, gWas = false, lmbWas = false;
     bool numWas[kSlotCount] = {};
     bool fireQueued = false;
+    bool rmbWas = false;
     bool menuOpen = args.menu; // --menu: já começa com o menu aberto
     bool vsync = gfx.vsync;
     float gameTime = 0.0f, fpsShown = 0.0f, msShown = 0.0f;
@@ -663,6 +824,104 @@ int main(int argc, char** argv) {
     Ragdoll playerRag;  // corpo mole quando o jogador morre
     // cobertura (Q): colado numa caixa/parede; agacha atrás das baixas, espia pela quina nas altas
     bool coverOn = false, coverEntering = false, qWas = false, coverHint = false;
+    // animação de entrar/sair da cobertura tocando: 1 = entrando, -1 = saindo
+    int coverTrans = 0;
+    float transT = 0.0f, transYaw = 0.0f, transYawFrom = 0.0f;
+    float transClipYaw = 0.0f; // giro do clipe neste quadro (vai para a direção do personagem, não para a pose)
+    // parkour: pulo correndo (clipe sincronizado com o voo) e salto por cima de obstáculos
+    bool runJumpOn = false, vaultOn = false;
+    float runJumpRate = 1.0f;     // velocidade do clipe no ar (o trecho no ar dura o mesmo que o voo)
+    float runJumpT = 0.0f, vaultT = 0.0f, vaultT0 = 0.0f, vaultSpeed = 0.0f, vaultYaw = 0.0f;
+    glm::vec3 vaultDir(0.0f, 0.0f, 1.0f);
+    glm::vec3 vaultPlant(0.0f); // onde a mão esquerda apoia no topo do obstáculo (com arma na mão)
+    auto frameTime = [](const MocapClip& c, float f) { return f / (float)c.frames.size() * c.duration; };
+    // começa o Running Jump: o trecho no ar do clipe é esticado para durar o voo inteiro (2 vy / g)
+    auto startRunJump = [&](float vy) {
+        if (!runJumpClip.valid()) return;
+        float clipAir = frameTime(runJumpClip, kRunJumpLand) - frameTime(runJumpClip, kRunJumpTakeoff);
+        runJumpRate = std::clamp(clipAir / (2.0f * vy / kGravity), 0.4f, 1.5f);
+        runJumpOn = true;
+        runJumpT = frameTime(runJumpClip, kRunJumpTakeoff - 1.5f); // um pouco antes do impulso (entra suave)
+    };
+    // pose do clipe no tempo t, tocando uma vez (sem voltar ao começo)
+    auto sampleOnce = [](const MocapClip& c, float t) {
+        const int n = (int)c.frames.size();
+        float f = std::clamp(t / c.duration, 0.0f, 1.0f) * (n - 1);
+        int i0 = std::min((int)f, n - 1), i1 = std::min(i0 + 1, n - 1);
+        return blendPose(c.frames[i0], c.frames[i1], f - i0);
+    };
+    // Obstáculo na frente, medido pelo perfil de altura do chão ao longo do caminho (de 10 em 10 cm),
+    // no centro e nos dois lados do corpo. 0 = nada, 1 = salto de parkour (65 cm a 1,15 m),
+    // 2 = baixo (só passa a perna por cima com um pulinho). Recusa escada (continua subindo),
+    // coisas compridas (mesa de lado), a ponta do obstáculo e o que não tem chão livre do outro lado.
+    auto findVault = [&](const glm::vec3& pos, const glm::vec3& dir, float& faceDist, float& height) {
+        const glm::vec3 side(-dir.z, 0.0f, dir.x);
+        const float step = 0.1f, range = 3.2f;
+        float face = 1e9f, end = -1.0f, top = 0.0f;
+        for (float off : {0.0f, -0.25f, 0.25f}) {
+            float f = -1.0f, e = -1.0f, h = 0.0f;
+            bool after = false; // já passou do obstáculo
+            for (float d = step; d <= range; d += step) {
+                glm::vec3 p = pos + dir * d + side * off;
+                float g = world.groundHeightAt(p.x, p.z, pos.y + 3.0f) - pos.y;
+                bool solid = g > kStepHeight - 0.02f;
+                if (solid && after) return 0; // subiu de novo depois: escada / mais obstáculos
+                if (solid) {
+                    if (f < 0.0f) f = d;
+                    e = d;
+                    h = std::max(h, g);
+                } else if (f >= 0.0f) {
+                    after = true;
+                    if (d - e > 1.1f) break; // chão livre o bastante para cair
+                }
+            }
+            if (f < 0.0f || !after) return 0;             // não tem obstáculo (ou não acaba): nada
+            if (off != 0.0f && std::fabs(f - face) > 0.25f) return 0; // ponta / quina: não é o mesmo obstáculo
+            face = std::min(face, f);
+            end = std::max(end, e);
+            top = std::max(top, h);
+        }
+        float depth = end - face + step;
+        if (depth > 1.3f || top > 1.15f) return 0;
+        // espaço livre por cima para o corpo passar
+        glm::vec3 over = pos + glm::vec3(0.0f, top + 0.45f, 0.0f);
+        if (world.raycast(over, dir, end + 1.0f) < end + 1.0f) return 0;
+        faceDist = face - step * 0.5f;
+        height = top;
+        return top >= 0.65f ? 1 : 2;
+    };
+    if (args.vaultTest) { // depuração do parkour: o que ele faria em cada ponto
+        const struct { const char* name; glm::vec3 pos, dir; } tests[] = {
+            {"escada", {6.5f, 0, 4.0f}, {0, 0, 1}},          {"azul baixa 0.5", {-4.5f, 0, 4.0f}, {0, 0, 1}},
+            {"azul 0.8", {-4.5f, 0, 7.0f}, {0, 0, 1}},       {"mureta arena", {-7.0f, 0, 30.0f}, {0, 0, 1}},
+            {"ponta da mureta", {-8.45f, 0, 30.0f}, {0, 0, 1}}, {"mesa (lado comprido)", {2.2f, 0, 1.6f}, {0, 0, 1}},
+            {"mesa (pela ponta)", {0.3f, 0, 3.0f}, {1, 0, 0}},
+        };
+        if (getenv("GA_BOXES")) // depuração: caixas de colisão numa região (x0 z0 x1 z1)
+            {
+                float r[4];
+                std::sscanf(getenv("GA_BOXES"), "%f %f %f %f", &r[0], &r[1], &r[2], &r[3]);
+                for (const Box& b : world.boxes)
+                    if (b.max.x > r[0] && b.min.x < r[2] && b.max.z > r[1] && b.min.z < r[3] && b.max.y > -10.0f)
+                        std::printf("[caixa] x %.2f..%.2f y %.2f..%.2f z %.2f..%.2f %s\n", b.min.x, b.max.x, b.min.y,
+                                    b.max.y, b.min.z, b.max.z, b.solid ? "" : "(so raios)");
+            }
+        for (auto& t : tests) {
+            float face = 0, h = 0;
+            int k = findVault(t.pos, glm::normalize(t.dir), face, h);
+            std::printf("[parkour] %-22s -> %s (frente %.2f m, altura %.2f m)\n", t.name,
+                        k == 1 ? "SALTO" : k == 2 ? "pulinho" : "nada", face, h);
+        }
+        for (int i = 0; i < SceneCount; ++i) { // layout: salvar e ler de volta tem que dar o mesmo texto
+            LevelLayout copy;
+            copy.parse(layouts[i].serialize());
+            std::printf("[layout] %s: ida e volta %s\n", sceneName(i), copy.serialize() == layouts[i].serialize() ? "ok" : "DIFERENTE");
+        }
+        glfwTerminate();
+        return 0;
+    }
+    const MocapClip* transClip = nullptr;
+    glm::vec3 transFrom(0.0f), transTo(0.0f);
     CoverFace coverF;
     float coverCrouch = 0.0f, coverPeek = 0.0f, peekSide = 1.0f, peekEdge = 0.0f;
     float coverAnimW = 0.0f, coverPhase = 0.0f; // peso e fase do clipe de cobertura
@@ -703,6 +962,53 @@ int main(int argc, char** argv) {
         }
     };
 
+    // editor do jogo (abre direto na versão de desenvolvimento; menu > Edição livre)
+    FreeEditor freeEdit;
+    bool playFromEditor = false;  // jogando a partir do editor: Esc para e volta
+    bool gunFromEditor = false;   // editor da arma aberto pelo editor: ao fechar, volta para ele
+    bool editorSettings = false;  // menu de configurações aberto por cima do editor
+    auto freeEditContext = [&]() {
+        LevelLayout& L = layouts[sceneId];
+        FreeEditor::Context c{L, world, scene.props, {}, L.hasDoor ? &arena.door : nullptr, root, sceneId};
+        for (const PropPlace& p : L.props)
+            c.propMeshes.push_back(!p.asset.empty() ? assets.mesh(p.asset)
+                                   : sceneId == SceneTest ? &tableMesh : official.mesh(p.name));
+        c.assets = &assets;
+        c.terrain = &terrain;
+        c.paint = &paint;
+        for (int i = 0; i < 3; ++i) {
+            c.gunNames.push_back(defs[i]->name);
+            c.gunFiles.push_back(defs[i]->file);
+            const GunItem& it = loadout.items[i];
+            c.gunPos.push_back(it.groundPos);
+            c.gunYaw.push_back(it.groundYaw);
+        }
+        return c;
+    };
+    // sai da edição: o cenário fica como foi editado e o jogo volta (do início do cenário)
+    auto exitFreeEdit = [&]() {
+        freeEdit.end();
+        setupScene(sceneId);
+        coverOn = coverEntering = runJumpOn = vaultOn = false;
+        coverTrans = 0;
+        transferT = 1.0f;
+        fillGuns(glm::mat4(1.0f), lastGuns);
+        // fecha o menu e volta a capturar o mouse
+        menuOpen = false;
+        mouseCaptured = true;
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwGetCursorPos(win, &lastMx, &lastMy);
+    };
+
+#if GA_EDITOR
+    if (args.freeEdit) {
+        glm::vec3 back(std::sin(charYaw), 0.0f, std::cos(charYaw));
+        glm::vec3 p = body.pos - back * 4.0f + glm::vec3(0.0f, 2.5f, 0.0f);
+        float y = charYaw, pt = 0.35f;
+        if (const char* c = getenv("GA_CAM")) std::sscanf(c, "%f %f %f %f %f", &p.x, &p.y, &p.z, &y, &pt); // depuração
+        freeEdit.begin(p, y, pt, root);
+    }
+#endif
     while (!glfwWindowShouldClose(win)) {
         double now = glfwGetTime();
         float realDt = (float)std::min(now - lastTime, 0.1);
@@ -718,9 +1024,19 @@ int main(int argc, char** argv) {
             glfwGetCursorPos(win, &lastMx, &lastMy);
             if (!open) gfx.save(settingsPath);
         };
-        if (esc && !escWas) {
+        if (esc && !escWas && !freeEdit.active()) { // na edição livre o Esc é do editor
             if (editorOpen) setEditor(false); // Esc no editor volta ao menu
-            else setMenu(!menuOpen);
+            else if (playFromEditor) { // Parar: volta ao editor com o cenário do começo
+                playFromEditor = false;
+                setupScene(sceneId);
+                playerRag.stop();
+                playerAlive = true;
+                health = 100.0f;
+                freeEdit.resume();
+                menuOpen = true;
+                mouseCaptured = false;
+                glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            } else setMenu(!menuOpen);
         }
         escWas = esc;
         const float dt = menuOpen ? 0.0f : realDt; // tempo de jogo
@@ -844,6 +1160,8 @@ int main(int argc, char** argv) {
         }
         if (!armed) fireQueued = false;
         hipFireTimer -= dt;
+        if (!rmb && rmbWas) hipFireTimer = 0.0f; // soltou a mira: volta na hora (mesmo depois de atirar)
+        rmbWas = rmb;
         bool aiming = armed && (rmb || hipFireTimer > 0.0f);
         cam.kick = approach(cam.kick, 0.0f, 9.0f, dt);
 
@@ -879,28 +1197,55 @@ int main(int argc, char** argv) {
         {
             bool qKey = key(GLFW_KEY_Q) > 0;
             CoverFace cand;
-            bool free = !coverOn && !coverEntering && playerAlive && !handling.locksMovement() && body.grounded;
+            bool free = !coverOn && !coverEntering && coverTrans == 0 && playerAlive && !handling.locksMovement() &&
+                        body.grounded;
             coverHint = free && findPlayerCover(world, body.pos, cam.forward, cand);
-            if (qKey && !qWas) {
-                if (coverOn || coverEntering) coverOn = coverEntering = false;
-                else if (coverHint) { coverF = cand; coverEntering = true; }
+            // começa uma transição: o clipe de entrar/sair toca uma vez
+            auto startTrans = [&](int dir) {
+                coverTrans = dir;
+                transT = 0.0f;
+                transClip = &(dir > 0 ? coverIn : coverOut)[coverF.low ? 1 : 0];
+                if (!transClip->valid()) { coverTrans = 0; transClip = nullptr; }
+            };
+            if (qKey && !qWas && coverTrans == 0) {
+                if (coverOn) {
+                    startTrans(-1);
+                    coverOn = false;
+                    transYaw = charYaw;
+                } else if (coverHint) {
+                    // entra: vira de costas para a parede pela animação enquanto desliza até ela
+                    coverF = cand;
+                    transFrom = body.pos;
+                    transTo = coverF.pointAt(std::clamp(coverF.along(body.pos), coverF.s0 + 0.25f, coverF.s1 - 0.25f), coverOff);
+                    transTo.y = body.pos.y;
+                    transYaw = std::atan2(coverF.n.x, coverF.n.z);
+                    coverEntering = true;
+                    startTrans(1);
+                    // o primeiro quadro do clipe fica virado para onde o personagem já está (não pula)
+                    if (coverTrans) transYawFrom = wrapAngle(charYaw - poseYaw(transClip->frames.front()));
+                    if (!coverTrans) { body.pos = transTo; coverEntering = false; coverOn = true; } // sem clipe: gruda direto
+                }
             }
             qWas = qKey;
-            if (handling.locksMovement() || !playerAlive) coverOn = coverEntering = false;
+            if (handling.locksMovement() || !playerAlive) { coverOn = coverEntering = false; coverTrans = 0; }
         }
         float edgeDist = 1e9f, edgeSide = 1.0f;
-        if (coverEntering) { // vai até a parede
-            glm::vec3 target = coverF.pointAt(std::clamp(coverF.along(body.pos), coverF.s0 + 0.25f, coverF.s1 - 0.25f), coverOff);
-            glm::vec3 d = target - body.pos;
-            d.y = 0.0f;
-            float l = glm::length(d);
-            if (l < 0.07f) { coverEntering = false; coverOn = true; }
-            else { move = d / l; wishSpeed = std::min(animator.runSpeed(), 1.0f + l * 6.0f); jump = false; }
+        if (coverTrans != 0) { // durante a animação de entrar/sair não anda nem pula
+            move = glm::vec3(0.0f);
+            jump = false;
+            aiming = false;
+            fireQueued = false;
         }
         if (coverOn) {
             jump = false;
             if (glm::dot(move, coverF.n) > 0.75f) {
-                coverOn = false; // puxou para longe da parede
+                // puxou para longe da parede: sai com a animação
+                coverOn = false;
+                coverTrans = -1;
+                transT = 0.0f;
+                transYaw = charYaw;
+                transClip = &coverOut[coverF.low ? 1 : 0];
+                if (!transClip->valid()) coverTrans = 0;
             } else {
                 float sNow = coverF.along(body.pos);
                 float ms = glm::dot(move, coverF.t);
@@ -917,25 +1262,125 @@ int main(int argc, char** argv) {
         aimW = approach(aimW, aiming ? 1.0f : 0.0f, aiming ? 16.0f : 8.0f, dt);
         cam.aimBlend = approach(cam.aimBlend, armed && rmb && aiming ? 1.0f : 0.0f, 11.0f, dt);
 
+        // --- parkour: correndo de frente para um obstáculo baixo, salta por cima sozinho
+        const float hSpeed = glm::length(glm::vec2(body.vel.x, body.vel.z));
+        if (!vaultOn && vaultClip.valid() && run && body.grounded && hSpeed > 3.0f && glm::length(move) > 0.5f &&
+            !coverOn && coverTrans == 0 && !handling.busy() && playerAlive) {
+            glm::vec3 dir = glm::normalize(glm::vec3(body.vel.x, 0.0f, body.vel.z));
+            float face, height;
+            int kind = glm::dot(dir, move) > 0.8f ? findVault(body.pos, dir, face, height) : 0;
+            if (kind == 2 && face > 0.35f && face < 0.9f && body.grounded) {
+                // baixo: pulinho só para passar a perna por cima (altura do obstáculo + folga)
+                body.vel.y = std::sqrt(2.0f * kGravity * (height + 0.2f));
+                body.grounded = false;
+                startRunJump(body.vel.y);
+            }
+            if (kind == 1 && face > 0.45f && face < 1.4f) {
+                // começa o clipe de modo que o pé saia do chão uns 30 cm antes do obstáculo
+                float perFrame = glm::length(vaultClip.travel) / (float)vaultClip.frames.size();
+                float startFrame = std::max(0.0f, kVaultTakeoff - (face - 0.3f) / perFrame);
+                vaultOn = true;
+                vaultT = vaultT0 = frameTime(vaultClip, startFrame);
+                vaultDir = dir;
+                // apoio da mão esquerda: logo depois da borda, um pouco à esquerda do corpo
+                glm::vec3 left(dir.z, 0.0f, -dir.x); // esquerda de quem olha para 'dir'
+                vaultPlant = body.pos + dir * (face + 0.15f) + left * 0.2f;
+                vaultPlant.y = body.pos.y + height + 0.01f;
+                vaultYaw = std::atan2(dir.x, dir.z);
+                vaultSpeed = glm::length(vaultClip.travel) / vaultClip.duration;
+                runJumpOn = false;
+            }
+        }
+        // correndo, o pulo é mais baixo e longo: o voo dura o mesmo que no clipe Running Jump
+        body.jumpSpeed = run && hSpeed > 3.0f && runJumpClip.valid() ? 5.9f : kJumpSpeed; // ~0,8 m de altura
+
         // --- física em passo fixo
-        bool landed = false;
+        bool landed = false, jumped = false;
         float impact = 0.0f;
         accumulator += dt;
+        if (vaultOn) { // saltando o obstáculo: o corpo segue o clipe (passa por cima, sem colidir)
+            accumulator = 0.0f;
+            body.pos += vaultDir * vaultSpeed * dt;
+            body.vel = vaultDir * vaultSpeed;
+            vaultT += dt;
+            if (vaultT >= vaultClip.duration - 0.05f) {
+                vaultOn = false;
+                body.vel = vaultDir * animator.runSpeed();
+            }
+        }
         while (accumulator >= fixedDt) {
             body.step(world, move, wishSpeed, jump, fixedDt);
             stepBalls(world, body, fixedDt);
             if (body.justLanded) { landed = true; impact = std::max(impact, body.landImpact); }
+            if (body.justJumped) jumped = true;
             accumulator -= fixedDt;
+        }
+        if (jumped && body.jumpSpeed < kJumpSpeed) startRunJump(body.jumpSpeed); // pulou correndo: Running Jump
+        if (runJumpOn) {
+            // no ar o clipe anda no ritmo do voo; se o voo demorar mais (caindo de algum lugar), segura
+            // a pose de queda; tocou o chão: segue da aterrissagem em velocidade normal
+            float landT = frameTime(runJumpClip, kRunJumpLand);
+            if (!body.grounded) runJumpT = std::min(runJumpT + dt * runJumpRate, landT - 0.04f);
+            else runJumpT = std::max(runJumpT, landT - 0.04f) + dt;
+            if (runJumpT >= runJumpClip.duration || coverOn || vaultOn) runJumpOn = false;
         }
         if (coverOn) { // continua colado na parede
             float d = coverF.dist(body.pos);
             body.pos += coverF.n * (coverOff - d);
         }
+        // transição: o corpo acompanha o deslocamento do clipe
+        float transW = 0.0f;
+        Pose transPose;
+        if (coverTrans != 0 && transClip) {
+            float prevT = transT;
+            transT = std::min(transT + dt, transClip->duration);
+            float u0 = prevT / transClip->duration, u1 = transT / transClip->duration;
+            if (coverTrans > 0) { // entrando: desliza até o ponto da parede
+                glm::vec3 p = glm::mix(transFrom, transTo, glm::smoothstep(0.0f, 0.85f, u1));
+                body.pos.x = p.x;
+                body.pos.z = p.z;
+            } else {              // saindo: afasta da parede como no clipe
+                glm::vec3 step = glm::angleAxis(transYaw, glm::vec3(0, 1, 0)) * transClip->travel * (u1 - u0);
+                body.pos.x += step.x;
+                body.pos.z += step.z;
+            }
+            body.vel.x = body.vel.z = 0.0f;
+            // pose do clipe (uma vez, sem voltar ao começo), entrando e saindo misturada
+            const int n = (int)transClip->frames.size();
+            float f = u1 * (n - 1);
+            int i0 = std::min((int)f, n - 1), i1 = std::min(i0 + 1, n - 1);
+            transPose = blendPose(transClip->frames[i0], transClip->frames[i1], f - i0);
+            // o giro do clipe sai da pose e entra na direção do personagem: misturando com as outras
+            // animações (todas viradas para a frente) o corpo não dá meia-volta
+            transClipYaw = poseYaw(transPose);
+            {
+                glm::quat q = glm::angleAxis(-transClipYaw, glm::vec3(0, 1, 0));
+                transPose.rot[HIPS] = glm::normalize(q * transPose.rot[HIPS]);
+                transPose.rootOffset = q * transPose.rootOffset;
+            }
+            float left = transClip->duration - transT;
+            float in = glm::smoothstep(0.0f, 0.2f, transT), out = glm::smoothstep(0.0f, 0.3f, left);
+            transW = in * out;
+            if (transT >= transClip->duration) {
+                if (coverTrans > 0) { coverEntering = false; coverOn = true; }
+                else charYaw = wrapAngle(transYaw + poseYaw(transClip->frames.back())); // continua virado como o clipe terminou
+                coverTrans = 0;
+                transW = 0.0f;
+            }
+        }
 
         // --- direção do corpo: mirando, fica de frente para a mira; senão, vira para o movimento
         float prevYaw = charYaw;
         bool moving = glm::length(move) > 0.1f;
-        if (aiming) {
+        if (vaultOn) {
+            charYaw = vaultYaw;
+        } else if (coverTrans > 0 && transClip) {
+            // entrando: do jeito que estava até de costas para a parede no fim (o resto do giro vem do clipe)
+            float u = glm::smoothstep(0.0f, 1.0f, transT / transClip->duration);
+            charYaw = wrapAngle(transYawFrom + wrapAngle(transYaw - transYawFrom) * u + transClipYaw);
+        } else if (coverTrans != 0) {
+            charYaw = wrapAngle(transYaw + transClipYaw); // saindo: o corpo gira como no clipe
+        } else if (aiming) {
             charYaw = wrapAngle(charYaw + wrapAngle(cam.yaw - charYaw) * (1.0f - std::exp(-18.0f * dt)));
         } else if (coverOn) { // de costas para a cobertura
             float faceYaw = std::atan2(coverF.n.x, coverF.n.z);
@@ -983,7 +1428,11 @@ int main(int argc, char** argv) {
         // costas encostadas: a cápsula fica afastada (raio), o corpo visível encosta na parede
         if (coverAnimW > 0.001f) visualPos -= coverF.n * (coverF.low ? 0.14f : 0.17f) * coverAnimW;
         // espiando: o corpo fica atrás da quina; só ombro, cabeça e arma passam para fora
-        if (coverPeek > 0.001f) visualPos += (coverF.t * peekSide * std::max(0.0f, peekEdge - 0.12f) + coverF.n * 0.08f) * coverPeek;
+        // espiando para a esquerda do personagem a arma (destra) fica do lado da parede: sai um pouco mais
+        bool peekLeft = glm::dot(coverF.t * peekSide, glm::vec3(-std::cos(charYaw), 0.0f, std::sin(charYaw))) < 0.0f;
+        if (coverPeek > 0.001f)
+            visualPos += (coverF.t * peekSide * (std::max(0.0f, peekEdge - 0.12f) + (peekLeft ? 0.22f : 0.0f)) +
+                          coverF.n * (peekLeft ? 0.14f : 0.08f)) * coverPeek;
         // quina à esquerda da câmera: câmera vai para o ombro esquerdo (senão mira de dentro da parede)
         {
             glm::vec3 camRight(-std::cos(cam.yaw), 0.0f, std::sin(cam.yaw));
@@ -995,7 +1444,7 @@ int main(int argc, char** argv) {
         Pose& pose = animator.pose();
         // na cobertura: clipe de andar de lado de costas para a parede (agachado na baixa);
         // parado segura a pose; mirando volta para a pose normal de mira
-        coverAnimW = approach(coverAnimW, coverOn && !aiming ? 1.0f : 0.0f, 8.0f, dt);
+        coverAnimW = approach(coverAnimW, (coverOn || coverTrans > 0) && !aiming ? 1.0f : 0.0f, 8.0f, dt);
         if (coverAnimW > 0.001f) {
             const MocapClip* clips = coverF.low ? coverLow : coverStand;
             glm::vec3 charLeft(std::cos(charYaw), 0.0f, -std::sin(charYaw)); // esquerda do personagem = +X
@@ -1007,24 +1456,42 @@ int main(int argc, char** argv) {
             if (cl.valid() && cr.valid()) {
                 float cycle = glm::mix(cl.cycleLength, cr.cycleLength, coverSideW);
                 float advance = std::fabs(side) / cycle * dt;
-                if (std::fabs(side) < 0.15f) {
-                    // parou: termina o passo até a pose de parado mais próxima à frente (os pés se acertam)
+                if (glm::length(move) < 0.1f) {
+                    // soltou a tecla: vai rápido (para frente ou para trás) até a pose de parado mais
+                    // próxima, com os pés no chão, e para ali
                     const std::vector<float>& idle = coverIdle[(coverF.low ? 2 : 0) + coverSide];
-                    float ahead = 1.0f;
-                    for (float ph : idle) ahead = std::min(ahead, std::fmod(ph - coverPhase + 2.0f, 1.0f));
-                    if (ahead < 0.995f && ahead > 0.005f) advance = std::min(ahead, 0.9f / (cycle / cl.naturalSpeed()) * dt);
-                    else advance = 0.0f;
+                    float best = 0.0f, bestAbs = 1.0f;
+                    for (float ph : idle) {
+                        float d = std::fmod(ph - coverPhase + 2.5f, 1.0f) - 0.5f; // -0.5..0.5
+                        if (std::fabs(d) < bestAbs) { bestAbs = std::fabs(d); best = d; }
+                    }
+                    float maxStep = 2.5f * dt; // ~0,2 s para acertar os pés
+                    advance = std::clamp(best, -maxStep, maxStep);
                 }
-                coverPhase = std::fmod(coverPhase + advance, 1.0f);
+                coverPhase = std::fmod(coverPhase + advance + 1.0f, 1.0f);
                 Pose cp = blendPose(cl.sample(coverPhase), cr.sample(coverPhase), coverSideW);
                 pose = blendPose(pose, cp, coverAnimW);
             }
+        }
+        if (transW > 0.001f) pose = blendPose(pose, transPose, transW); // entrando/saindo da cobertura
+        // parkour: pose dos clipes por cima da animação (entra e sai misturando)
+        if (runJumpOn) {
+            // entra em ~0,15 s a partir do começo e sai nos últimos 0,3 s (aterrissagem -> corrida)
+            float t0 = frameTime(runJumpClip, kRunJumpTakeoff - 1.5f);
+            float w = glm::smoothstep(0.0f, 0.3f, runJumpClip.duration - runJumpT) *
+                      glm::smoothstep(t0, t0 + 0.15f * runJumpRate, runJumpT);
+            pose = blendPose(pose, sampleOnce(runJumpClip, runJumpT), w);
+        }
+        if (vaultOn) {
+            float w = glm::smoothstep(0.0f, 0.2f, vaultClip.duration - vaultT) * glm::smoothstep(0.0f, 0.12f, vaultT - vaultT0);
+            pose = blendPose(pose, sampleOnce(vaultClip, vaultT), w);
         }
         footIK.apply(skeleton, pose, charModel, world, animator.groundedWeight(), dt);
         if (coverPeek > 0.001f) {
             // tronco inclinado para o lado da quina (expõe o mínimo)
             glm::vec3 charRight(-std::cos(charYaw), 0.0f, std::sin(charYaw));
-            float lean = (glm::dot(coverF.t * peekSide, charRight) > 0.0f ? 1.0f : -1.0f) * 0.22f * coverPeek;
+            bool right = glm::dot(coverF.t * peekSide, charRight) > 0.0f;
+            float lean = (right ? 0.22f : -0.38f) * coverPeek; // para a esquerda inclina mais (tira a arma da parede)
             pose.rot[SPINE] = pose.rot[SPINE] * glm::angleAxis(lean * 0.4f, glm::vec3(0, 0, 1));
             pose.rot[CHEST] = pose.rot[CHEST] * glm::angleAxis(lean * 0.6f, glm::vec3(0, 0, 1));
         }
@@ -1045,6 +1512,10 @@ int main(int argc, char** argv) {
         // indo contra a porta: com a mão livre espalma a mão nela; armado, empurra com o ombro
         {
             Door::Touch t = arena.door.touch(body);
+            for (const Door& d : arena.extraDoors) {
+                Door::Touch e = d.touch(body);
+                if (e.weight > t.weight) t = e;
+            }
             if (t.weight > 0.01f) doorTouch = t;
             doorW = approach(doorW, playerAlive && !handling.busy() ? t.weight : 0.0f, 9.0f, dt);
         }
@@ -1058,6 +1529,47 @@ int main(int argc, char** argv) {
             applyPalmOnSurface(skeleton, pose, pl.x < 0.15f, pl, nl, doorW); // mão do lado da porta (esquerda = +X)
             computeGlobals(skeleton, pose, globals);
             computeSkinMatrices(skeleton, globals, skin);
+        }
+        // parkour com arma: a mão esquerda solta a arma e apoia no topo do obstáculo enquanto passa por cima
+        if (vaultOn && loadout.hand >= 0) {
+            float f = vaultT / vaultClip.duration * (float)vaultClip.frames.size(); // quadro do clipe
+            float w = glm::smoothstep(kVaultTakeoff - 3.0f, kVaultTakeoff, f) * (1.0f - glm::smoothstep(18.0f, 23.0f, f));
+            if (w > 0.001f) {
+                // mão espalmada no topo: palma para baixo, dedos para a frente do salto
+                glm::vec3 x(0.0f, 1.0f, 0.0f), y = -vaultDir; // eixos da mão esquerda: palma = -X, dedos = -Y
+                glm::quat rot = glm::normalize(glm::quat_cast(glm::mat3(x, y, glm::cross(x, y))));
+                glm::vec3 wrist = vaultPlant - rot * glm::vec3(-0.03f, -0.07f, 0.0f) + glm::vec3(0.0f, 0.02f, 0.0f);
+                glm::mat4 inv = glm::inverse(charModel);
+                glm::mat4 hand = inv * (glm::translate(glm::mat4(1.0f), wrist) * glm::mat4_cast(rot));
+                applyHandTarget(skeleton, pose, false, hand, w);
+                setFingerCurl(skeleton, pose, 0, 0.1f * w + 0.3f * (1.0f - w), 0.2f);
+                computeGlobals(skeleton, pose, globals);
+                computeSkinMatrices(skeleton, globals, skin);
+            }
+        }
+        // na cobertura sem arma: a mão que passa da face da parede (a de trás no passo de lado)
+        // fica espalmada nela em vez de atravessar
+        if (loadout.hand < 0 && (coverOn || coverTrans != 0) && coverAnimW > 0.05f) {
+            glm::mat4 inv = glm::inverse(charModel);
+            bool changed = false;
+            for (int side = 0; side < 2; ++side) {
+                Bone h = side == 0 ? HAND_L : HAND_R;
+                glm::vec3 tip = glm::vec3(charModel * globals[h] * glm::vec4(skeleton.tail[h] - skeleton.joint[h], 1.0f));
+                glm::vec3 wrist = glm::vec3(charModel * globals[h][3]);
+                float d = std::min(coverF.dist(tip), coverF.dist(wrist));
+                float pen = 0.04f - d; // quanto passou da parede (com folga de 4 cm)
+                if (pen <= 0.0f) continue;
+                // mesma mão do clipe (mesma rotação), só empurrada para fora da parede
+                glm::mat4 hand = globals[h];
+                glm::vec3 push = glm::vec3(inv * glm::vec4(coverF.n * pen, 0.0f));
+                hand[3] += glm::vec4(push, 0.0f);
+                applyHandTarget(skeleton, pose, side == 1, hand, coverAnimW);
+                changed = true;
+            }
+            if (changed) {
+                computeGlobals(skeleton, pose, globals);
+                computeSkinMatrices(skeleton, globals, skin);
+            }
         }
         if (playerRag.active()) { // morto: o ragdoll manda no corpo (a arma continua na mão)
             playerRag.step(world, dt);
@@ -1112,6 +1624,8 @@ int main(int argc, char** argv) {
             std::vector<CharacterBody*> pushers = squad.aliveBodies();
             pushers.push_back(&body);
             arena.door.update(world, pushers, dt);
+            for (Door& d : arena.extraDoors) d.update(world, pushers, dt);
+            assets.stepDynamics(world, scene.props, pushers, dt); // objetos com física
             float hurt = squad.update(world, {visualPos, body.vel, playerAlive, 1.3f - coverCrouch * 0.95f}, enemyFx, dt);
             enemyFx.update(world, dt);
 #if GA_EDITOR
@@ -1137,6 +1651,7 @@ int main(int argc, char** argv) {
                     push = glm::length(push) > 1e-3f ? glm::normalize(push) * 3.0f : glm::vec3(0.0f);
                     playerRag.start(skeleton, globals, charModel, body.vel, push, visualPos + glm::vec3(0.0f, 1.3f, 0.0f));
                     coverOn = coverEntering = false;
+                    coverTrans = 0;
                     fireQueued = false;
                     if (handling.locksMovement()) handling.cancel();
                 }
@@ -1183,6 +1698,7 @@ int main(int argc, char** argv) {
             scene.panels.clear();
             squad.addToScene(scene, gunMeshes[1]);
             arena.door.addPanels(scene.panels);
+            for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
             scene.view = cam.view;
             scene.proj = glm::perspective(cam.fov(), (float)fbw / fbh, 0.05f, 1000.0f);
             scene.camPos = cam.pos;
@@ -1213,10 +1729,62 @@ int main(int argc, char** argv) {
             }
             scene.promptWorld = promptPos;
             scene.time = gameTime;
+            FreeEditor::Context feCtx = freeEditContext();
+            if (freeEdit.active()) {
+                // edição livre: câmera voando, seleção e gestos; confirmar remonta o cenário
+                glm::vec3 eye;
+                glm::mat4 v, p;
+                FreeEditor::Result r = freeEdit.update(win, realDt, feCtx, fbw, fbh, v, p, eye);
+                if (r == FreeEditor::Result::Rebuild) setupScene(sceneId);
+                scene.view = v;
+                scene.proj = p;
+                scene.camPos = eye;
+                scene.crosshairAlpha = 0.0f;
+                scene.promptAlpha = 0.0f;
+            }
+            if (playFromEditor) { // jogando pelo editor: a imagem fica na vista, entre os painéis
+                int ww, wh;
+                glfwGetWindowSize(win, &ww, &wh);
+                scene.proj = freeEdit.viewportFix((float)ww, (float)wh, (float)fbw / std::max(1, fbh)) * scene.proj;
+            }
             renderer.render(scene, realDt);
 
             menu::beginFrame();
-            if (editorOpen) {
+            if (freeEdit.active()) {
+                FreeEditor::Result r = freeEdit.drawUi(feCtx, scene.proj * scene.view, fbw, fbh);
+                using R = FreeEditor::Result;
+                if (r == R::Rebuild) setupScene(sceneId);
+                else if (r == R::Play) {
+                    editorSettings = false;
+                    playFromEditor = true;
+                    playerRag.stop();
+                    playerAlive = true;
+                    health = 100.0f;
+                    exitFreeEdit();
+                } else if (r == R::Compile) {
+                    saveGunTuning(weaponsPath);
+                    builder::start(root);
+                } else if (r == R::Settings) editorSettings = !editorSettings;
+                else if (r == R::EditGun) {
+                    freeEdit.end();
+                    editorSettings = false;
+                    gunFromEditor = true;
+                    ed.gun = freeEdit.gunToEdit();
+                    setEditor(true);
+                } else if (r == R::ChangeScene) {
+                    gfx.scene = freeEdit.sceneTarget();
+                    setupScene(gfx.scene);
+                    gfx.save(settingsPath);
+                }
+                if (editorSettings && freeEdit.active()) {
+                    bool changed = false;
+                    menu::Action act = menu::drawPauseMenu(gfx, changed);
+                    if (act == menu::Action::Resume || act == menu::Action::FreeEdit) editorSettings = false;
+                    else if (act == menu::Action::Quit) glfwSetWindowShouldClose(win, 1);
+                    else if (act == menu::Action::Compile) { saveGunTuning(weaponsPath); builder::start(root); editorSettings = false; }
+                    if (changed) gfx.save(settingsPath);
+                }
+            } else if (editorOpen) {
                 menu::EditorAction ea = menu::drawGunEditor(ed, gunNames, gunIsRifle, 3, edPanel);
                 auto apply = [&]() {
                     bool ok = saveGunTuning(weaponsPath);
@@ -1234,13 +1802,34 @@ int main(int argc, char** argv) {
                 if (act == menu::Action::Resume) setMenu(false);
                 else if (act == menu::Action::Quit) glfwSetWindowShouldClose(win, 1);
                 else if (act == menu::Action::EditGuns) setEditor(true);
+                else if (act == menu::Action::FreeEdit) freeEdit.begin(cam.pos, cam.yaw, cam.pitch, root);
+                else if (act == menu::Action::ChangeScene) {
+                    // troca de cenário na hora: zera tudo que é do jogador e do combate
+                    setupScene(gfx.scene);
+                    coverOn = coverEntering = runJumpOn = vaultOn = false;
+                    coverTrans = 0;
+                    playerRag.stop();
+                    playerAlive = true;
+                    health = 100.0f;
+                    wave = 1;
+                    waveT = 0.0f;
+                    next = Next::None;
+                    transferT = 1.0f;
+                    fillGuns(glm::mat4(1.0f), lastGuns);
+                    gfx.save(settingsPath);
+                }
                 else if (act == menu::Action::Compile) {
                     saveGunTuning(weaponsPath);
                     builder::start(root);
                 }
             }
+            if (gunFromEditor && !editorOpen) { // fechou o editor da arma: volta ao editor
+                gunFromEditor = false;
+                freeEdit.resume();
+            }
+            if (playFromEditor) freeEdit.drawPlaying(feCtx); // painéis do editor em volta do jogo
             menu::drawBuildStatus();
-            if (!editorOpen) {
+            if (!editorOpen && !freeEdit.active()) {
                 menu::CombatHud hud;
                 hud.health = health;
                 hud.hurtFlash = hurtFlash;
@@ -1264,6 +1853,20 @@ int main(int argc, char** argv) {
             if (gfx.vsync != vsync) {
                 vsync = gfx.vsync;
                 glfwSwapInterval(vsync ? 1 : 0);
+            }
+        }
+        // depuração: GA_GRAB="quadro arquivo.png" salva a tela do jogo nesse quadro e fecha
+        if (const char* grab = getenv("GA_GRAB")) {
+            static int frameNo = 0;
+            int at = 0;
+            char path[512] = {};
+            if (std::sscanf(grab, "%d %511s", &at, path) == 2 && ++frameNo == at) {
+                std::vector<unsigned char> px((size_t)fbw * fbh * 4);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glReadPixels(0, 0, fbw, fbh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                stbi_flip_vertically_on_write(1);
+                stbi_write_png(path, fbw, fbh, 4, px.data(), fbw * 4);
+                glfwSetWindowShouldClose(win, 1);
             }
         }
         glfwSwapBuffers(win);

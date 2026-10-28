@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <numeric>
 #include <string>
 #include <unordered_map>
@@ -203,6 +204,34 @@ bool decodeEmbedded(const aiScene* sc, const aiMaterial* m, std::initializer_lis
     return false;
 }
 
+// Folhagem: se a imagem já tem alpha, recorta por ele; se não tem e o material é de folhas, o fundo
+// branco vira transparente (e ganha a cor média das folhas, para o filtro não deixar borda branca).
+bool cutoutAlpha(Image& im, std::string name) {
+    const size_t n = (size_t)im.w * im.h;
+    size_t holes = 0;
+    for (size_t i = 0; i < n; ++i) holes += im.px[i * 4 + 3] < 128;
+    if (holes > n / 50) return true;
+    for (char& ch : name) ch = (char)std::tolower((unsigned char)ch);
+    if (name.find("leaf") == std::string::npos && name.find("leaves") == std::string::npos && name.find("folh") == std::string::npos && name.find("foliage") == std::string::npos)
+        return false;
+    double sum[3] = {0, 0, 0};
+    size_t kept = 0;
+    std::vector<bool> bg(n);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned char* q = &im.px[i * 4];
+        int mn = std::min({q[0], q[1], q[2]});
+        bg[i] = mn > 200 && std::max({q[0], q[1], q[2]}) - mn < 40; // quase branco e sem cor
+        if (!bg[i]) { for (int k = 0; k < 3; ++k) sum[k] += q[k]; ++kept; }
+    }
+    if (!kept) return false;
+    for (size_t i = 0; i < n; ++i)
+        if (bg[i]) {
+            for (int k = 0; k < 3; ++k) im.px[i * 4 + k] = (unsigned char)(sum[k] / kept);
+            im.px[i * 4 + 3] = 0;
+        }
+    return true;
+}
+
 GLuint upload(const Image& im, bool srgb) {
     std::printf("[modelo] textura %s %dx%d\n", im.name.c_str(), im.w, im.h);
     return makeTexture2D(im.px.data(), im.w, im.h, srgb);
@@ -240,6 +269,83 @@ GLuint specGlossToMR(const aiScene* sc, const aiMaterial* m, int maxSize, float 
 glm::mat4 toGlm(const aiMatrix4x4& m) {
     // aiMatrix4x4 é row-major; glm é column-major.
     return glm::transpose(glm::make_mat4(&m.a1));
+}
+
+// Interpola dois vértices (posição, normal, UV) para recortar triângulos.
+Vertex lerpVertex(const Vertex& a, const Vertex& b, float t) {
+    Vertex v = a;
+    for (int k = 0; k < 3; ++k) {
+        v.pos[k] = a.pos[k] + (b.pos[k] - a.pos[k]) * t;
+        v.nrm[k] = a.nrm[k] + (b.nrm[k] - a.nrm[k]) * t;
+    }
+    for (int k = 0; k < 2; ++k) v.uv[k] = a.uv[k] + (b.uv[k] - a.uv[k]) * t;
+    return v;
+}
+
+// Corta o polígono (convexo) pelo plano eixo = valor e fica com o lado 'less' (ou o outro).
+std::vector<Vertex> clipPoly(const std::vector<Vertex>& in, int axis, float value, bool less) {
+    std::vector<Vertex> out;
+    auto inside = [&](const Vertex& v) { return less ? v.pos[axis] <= value : v.pos[axis] >= value; };
+    for (size_t i = 0; i < in.size(); ++i) {
+        const Vertex &a = in[i], &b = in[(i + 1) % in.size()];
+        bool ia = inside(a), ib = inside(b);
+        if (ia) out.push_back(a);
+        if (ia != ib) out.push_back(lerpVertex(a, b, (value - a.pos[axis]) / (b.pos[axis] - a.pos[axis])));
+    }
+    return out;
+}
+
+// Abre os vãos: triângulos da parede (normal no eixo mais fino da caixa) que cruzam a caixa
+// ficam só com os pedaços de fora do retângulo do vão.
+void cutHoles(std::vector<Vertex>& verts, std::vector<unsigned>& idx, std::vector<int>& triMat,
+              const std::vector<std::pair<glm::vec3, glm::vec3>>& cuts) {
+    for (const auto& [lo, hi] : cuts) {
+        glm::vec3 ext = hi - lo;
+        int thin = ext.x < ext.y ? (ext.x < ext.z ? 0 : 2) : (ext.y < ext.z ? 1 : 2);
+        int u = (thin + 1) % 3, v = (thin + 2) % 3;
+        std::vector<unsigned> outIdx;
+        std::vector<int> outMat;
+        int cutCount = 0;
+        for (size_t t = 0; t + 2 < idx.size(); t += 3) {
+            const Vertex* tv[3] = {&verts[idx[t]], &verts[idx[t + 1]], &verts[idx[t + 2]]};
+            glm::vec3 p[3];
+            for (int k = 0; k < 3; ++k) p[k] = glm::vec3(tv[k]->pos[0], tv[k]->pos[1], tv[k]->pos[2]);
+            glm::vec3 bmin = glm::min(p[0], glm::min(p[1], p[2])), bmax = glm::max(p[0], glm::max(p[1], p[2]));
+            glm::vec3 n = glm::cross(p[1] - p[0], p[2] - p[0]);
+            bool wall = std::fabs(n[thin]) > 0.7f * glm::length(n);
+            bool overlap = glm::all(glm::lessThanEqual(bmin, hi)) && glm::all(glm::greaterThanEqual(bmax, lo));
+            if (!wall || !overlap) {
+                for (int k = 0; k < 3; ++k) outIdx.push_back(idx[t + k]);
+                outMat.push_back(triMat[t / 3]);
+                continue;
+            }
+            ++cutCount;
+            // pedaços fora do retângulo: antes de lo[u], depois de hi[u], e entre eles acima/abaixo em v
+            std::vector<Vertex> poly = {*tv[0], *tv[1], *tv[2]};
+            std::vector<std::vector<Vertex>> pieces;
+            pieces.push_back(clipPoly(poly, u, lo[u], true));
+            std::vector<Vertex> rest = clipPoly(poly, u, lo[u], false);
+            pieces.push_back(clipPoly(rest, u, hi[u], false));
+            rest = clipPoly(rest, u, hi[u], true);
+            pieces.push_back(clipPoly(rest, v, lo[v], true));
+            rest = clipPoly(rest, v, lo[v], false);
+            pieces.push_back(clipPoly(rest, v, hi[v], false));
+            for (const auto& pc : pieces) {
+                if (pc.size() < 3) continue;
+                unsigned base = (unsigned)verts.size();
+                for (const Vertex& vx : pc) verts.push_back(vx);
+                for (size_t k = 1; k + 1 < pc.size(); ++k) { // leque (mesma ordem de giro do original)
+                    outIdx.push_back(base);
+                    outIdx.push_back(base + (unsigned)k);
+                    outIdx.push_back(base + (unsigned)k + 1);
+                    outMat.push_back(triMat[t / 3]);
+                }
+            }
+        }
+        idx.swap(outIdx);
+        triMat.swap(outMat);
+        std::printf("[modelo] vao aberto: %d triangulos recortados\n", cutCount);
+    }
 }
 
 // Pesos do arquivo já levados para os nossos ossos (um mapa por vértice).
@@ -301,7 +407,13 @@ unsigned char linearToSrgb8(float v) {
 
 CharacterModel::Material loadMaterial(const aiScene* sc, const aiMaterial* mat, int maxTex) {
     CharacterModel::Material m;
-    m.texBase = loadEmbedded(sc, mat, {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE}, true, maxTex);
+    {
+        Image im;
+        if (decodeEmbedded(sc, mat, {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE}, maxTex, im)) {
+            m.alphaCut = cutoutAlpha(im, mat->GetName().C_Str());
+            m.texBase = upload(im, true);
+        }
+    }
     m.texMR = loadEmbedded(sc, mat, {aiTextureType_METALNESS, aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_UNKNOWN}, false, maxTex);
     m.texNormal = loadEmbedded(sc, mat, {aiTextureType_NORMALS}, false, maxTex);
     m.texEmissive = loadEmbedded(sc, mat, {aiTextureType_EMISSIVE}, true, maxTex);
@@ -361,6 +473,42 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
         for (auto& [name, p] : *opt.joints) p = place(p);
     std::printf("[modelo] %zu vertices, %zu triangulos\n", verts.size(), idx.size() / 3);
 
+    if (opt.keepSource) {
+        srcVerts_.assign((const unsigned char*)verts.data(), (const unsigned char*)(verts.data() + verts.size()));
+        srcIdx_ = idx;
+        srcMat_ = triMat;
+    }
+    if (!opt.cuts.empty()) cutHoles(verts, idx, triMat, opt.cuts);
+    for (const auto& [lo, hi] : opt.clear) {
+        std::vector<unsigned> keepIdx;
+        std::vector<int> keepMat;
+        int removed = 0;
+        for (size_t t = 0; t + 2 < idx.size(); t += 3) {
+            bool in = true;
+            float top = -1e9f;
+            for (int k = 0; k < 3; ++k) {
+                glm::vec3 p(verts[idx[t + k]].pos[0], verts[idx[t + k]].pos[1], verts[idx[t + k]].pos[2]);
+                in = in && glm::all(glm::greaterThanEqual(p, lo)) && glm::all(glm::lessThanEqual(p, hi));
+                top = std::max(top, p.y);
+            }
+            if (in && top > lo.y + 0.03f) { ++removed; continue; } // o chão (bem rente a lo.y) fica
+            for (int k = 0; k < 3; ++k) keepIdx.push_back(idx[t + k]);
+            keepMat.push_back(triMat[t / 3]);
+        }
+        idx.swap(keepIdx);
+        triMat.swap(keepMat);
+        std::printf("[modelo] regiao esvaziada: %d triangulos tirados\n", removed);
+    }
+    if (opt.triangles) {
+        opt.triangles->reserve(idx.size());
+        for (unsigned i : idx) opt.triangles->push_back(glm::vec3(verts[i].pos[0], verts[i].pos[1], verts[i].pos[2]));
+    }
+    boundsMin = glm::vec3(1e9f);
+    boundsMax = glm::vec3(-1e9f);
+    for (const Vertex& v : verts) {
+        boundsMin = glm::min(boundsMin, glm::vec3(v.pos[0], v.pos[1], v.pos[2]));
+        boundsMax = glm::max(boundsMax, glm::vec3(v.pos[0], v.pos[1], v.pos[2]));
+    }
     computeTangents(verts, idx);
     if (sk) {
         rigidRig(*sk, verts, idx);
@@ -403,7 +551,12 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
             parts.back().count += 3;
         }
         idx.swap(sorted);
-        for (int id : matIds) materials.push_back(loadMaterial(sc, sc->mMaterials[id], opt.maxTextureSize));
+        matIds_ = matIds;
+        for (int id : matIds) {
+            materials.push_back(loadMaterial(sc, sc->mMaterials[id], opt.maxTextureSize));
+            hasAlphaCut |= materials.back().alphaCut;
+            materialNames.push_back(sc->mMaterials[id]->GetName().C_Str());
+        }
     }
 
     glGenVertexArrays(1, &vao_);
@@ -433,6 +586,47 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
     return true;
 }
 
+bool CharacterModel::recut(const std::vector<std::pair<glm::vec3, glm::vec3>>& cuts, std::vector<glm::vec3>* triangles) {
+    if (srcVerts_.empty() || !vao_) return false;
+    std::vector<Vertex> verts(srcVerts_.size() / sizeof(Vertex));
+    std::memcpy(verts.data(), srcVerts_.data(), srcVerts_.size());
+    std::vector<unsigned> idx = srcIdx_;
+    std::vector<int> triMat = srcMat_;
+    if (!cuts.empty()) cutHoles(verts, idx, triMat, cuts);
+    if (triangles) {
+        triangles->clear();
+        triangles->reserve(idx.size());
+        for (unsigned i : idx) triangles->push_back(glm::vec3(verts[i].pos[0], verts[i].pos[1], verts[i].pos[2]));
+    }
+    computeTangents(verts, idx);
+    for (Vertex& v : verts) {
+        v.bones[0] = v.bones[1] = v.bones[2] = v.bones[3] = 0;
+        v.weights[0] = 1.0f;
+        v.weights[1] = v.weights[2] = v.weights[3] = 0.0f;
+    }
+    // mesma divisão por material do load (os materiais já carregados continuam valendo)
+    std::vector<unsigned> sorted;
+    sorted.reserve(idx.size());
+    for (Part& p : parts) {
+        p.first = (GLsizei)sorted.size();
+        p.count = 0;
+        const int id = matIds_[p.material];
+        for (size_t t = 0; t < triMat.size(); ++t)
+            if (triMat[t] == id) {
+                for (int e = 0; e < 3; ++e) sorted.push_back(idx[t * 3 + e]);
+                p.count += 3;
+            }
+    }
+    glBindVertexArray(vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sorted.size() * sizeof(unsigned), sorted.data(), GL_STATIC_DRAW);
+    glBindVertexArray(0);
+    indexCount_ = (GLsizei)sorted.size();
+    return true;
+}
+
 void CharacterModel::draw() const {
     glBindVertexArray(vao_);
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
@@ -441,4 +635,43 @@ void CharacterModel::draw() const {
 void CharacterModel::drawPart(size_t i) const {
     glBindVertexArray(vao_);
     glDrawElements(GL_TRIANGLES, parts[i].count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned) * parts[i].first));
+}
+
+void CharacterModel::reset() {
+    if (vao_) glDeleteVertexArrays(1, &vao_);
+    if (vbo_) glDeleteBuffers(1, &vbo_);
+    if (ebo_) glDeleteBuffers(1, &ebo_);
+    for (const Material& m : materials) {
+        GLuint t[4] = {m.texBase, m.texMR, m.texNormal, m.texEmissive};
+        glDeleteTextures(4, t);
+    }
+    vao_ = vbo_ = ebo_ = 0;
+    indexCount_ = 0;
+    materials.clear();
+    materialNames.clear();
+    parts.clear();
+    srcVerts_.clear();
+    srcIdx_.clear();
+    srcMat_.clear();
+    matIds_.clear();
+}
+
+bool CharacterModel::setBaseTexture(int material, const std::string& imagePath) {
+    if (material < 0 || material >= (int)materials.size()) return false;
+    int w, h, c;
+    unsigned char* px = stbi_load(imagePath.c_str(), &w, &h, &c, 4);
+    if (!px) {
+        std::fprintf(stderr, "[modelo] nao abriu a imagem %s\n", imagePath.c_str());
+        return false;
+    }
+    Image im;
+    im.px.assign(px, px + (size_t)w * h * 4);
+    im.w = w;
+    im.h = h;
+    im.name = imagePath;
+    stbi_image_free(px);
+    downscale(im, 2048);
+    glDeleteTextures(1, &materials[material].texBase);
+    materials[material].texBase = upload(im, true);
+    return true;
 }

@@ -204,6 +204,7 @@ bool loadMixamoClip(const std::string& path, const Skeleton& sk, MocapClip& out)
 
     out.duration = (float)(dur / tps);
     out.cycleLength = glm::length(travel) * scale;
+    out.travel = travel * scale;
     out.phaseOffset = (float)(std::max_element(leftReach.begin(), leftReach.end()) - leftReach.begin()) / n;
     std::printf("[mocap] %s: %d quadros, %.2f s, passada %.2f m, velocidade %.2f m/s\n",
                 shortName(path.substr(path.find_last_of('/') + 1)).c_str(), n, out.duration, out.cycleLength,
@@ -211,20 +212,28 @@ bool loadMixamoClip(const std::string& path, const Skeleton& sk, MocapClip& out)
     return true;
 }
 
+float poseYaw(const Pose& p) {
+    // peito (costas na parede): quadril * coluna * peito, todos neutros = identidade
+    glm::vec3 f = p.rot[HIPS] * p.rot[SPINE] * p.rot[CHEST] * glm::vec3(0, 0, 1);
+    return std::atan2(f.x, f.z);
+}
+
 float clipMeanYaw(const MocapClip& c) {
     glm::vec2 sum(0.0f);
     for (const Pose& p : c.frames) {
-        // peito (costas na parede): quadril * coluna * peito, todos neutros = identidade
-        glm::vec3 f = p.rot[HIPS] * p.rot[SPINE] * p.rot[CHEST] * glm::vec3(0, 0, 1);
-        sum += glm::normalize(glm::vec2(f.x, f.z) + glm::vec2(1e-6f));
+        float y = poseYaw(p);
+        sum += glm::vec2(std::sin(y), std::cos(y));
     }
     return std::atan2(sum.x, sum.y);
 }
 
-void removeClipYaw(MocapClip& c) {
-    glm::quat q = glm::angleAxis(-clipMeanYaw(c), glm::vec3(0, 1, 0));
+void rotateClip(MocapClip& c, float yaw) {
+    glm::quat q = glm::angleAxis(yaw, glm::vec3(0, 1, 0));
     for (Pose& p : c.frames) {
         p.rot[HIPS] = glm::normalize(q * p.rot[HIPS]);
         p.rootOffset = q * p.rootOffset;
     }
+    c.travel = q * c.travel;
 }
+
+void removeClipYaw(MocapClip& c) { rotateClip(c, -clipMeanYaw(c)); }
