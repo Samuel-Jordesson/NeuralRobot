@@ -37,7 +37,7 @@ public:
         std::vector<float> gunYaw;
         std::vector<const std::vector<glm::vec3>*> propTris; // triângulos de cada prop (pintar no modelo)
     };
-    enum class Result { None, Rebuild, Play, Compile, Settings, EditGun, ChangeScene };
+    enum class Result { None, Rebuild, Play, Compile, Settings, EditGun, ChangeScene, Animate };
 
     bool active() const { return active_; }
     void begin(const glm::vec3& camPos, float yaw, float pitch, const std::string& root);

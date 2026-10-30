@@ -1085,6 +1085,13 @@ bool toolButton(const char* id, const char* label, float h, ImU32 tint, int icon
         dl->AddTriangleFilled(ImVec2(c.x - s * 0.15f, c.y - s * 0.05f), ImVec2(c.x + s * 0.08f, c.y + s * 0.18f),
                               ImVec2(c.x - s * 0.5f, c.y + s * 0.5f), tint);
         break;
+    case 7: // animação (bonequinho)
+        dl->AddCircleFilled(ImVec2(c.x, c.y - s * 0.38f), s * 0.13f, tint);
+        dl->AddLine(ImVec2(c.x, c.y - s * 0.25f), ImVec2(c.x, c.y + s * 0.1f), tint, 2.0f);
+        dl->AddLine(ImVec2(c.x - s * 0.4f, c.y - s * 0.25f), ImVec2(c.x + s * 0.4f, c.y - s * 0.05f), tint, 2.0f);
+        dl->AddLine(ImVec2(c.x, c.y + s * 0.1f), ImVec2(c.x - s * 0.3f, c.y + s * 0.5f), tint, 2.0f);
+        dl->AddLine(ImVec2(c.x, c.y + s * 0.1f), ImVec2(c.x + s * 0.3f, c.y + s * 0.5f), tint, 2.0f);
+        break;
     case 4: // configurações (controles deslizantes)
         for (int i = 0; i < 3; ++i) {
             float y = c.y - s * 0.35f + i * s * 0.35f, k = (i == 1 ? 0.2f : -0.2f) * s;
@@ -1176,6 +1183,8 @@ void FreeEditor::drawToolbar(Context& c, Result& res, float W, float h) {
         mode_ = 0;
         status_ = paintMode_ ? "Pincel: segure o botão esquerdo na vista para pintar (Shift inverte)" : "Clique num objeto para selecionar";
     }
+    ImGui::SameLine();
+    if (toolButton("animar", "Criar animação", bh, IM_COL32(120, 200, 255, 255), 7)) res = Result::Animate;
     ImGui::SameLine(0, 30);
     if (toolButton("jogar", playing_ ? "Parar (Esc)" : "Jogar", bh, playing_ ? IM_COL32(230, 80, 70, 255) : IM_COL32(90, 220, 90, 255), playing_ ? 5 : 3))
         res = Result::Play;

@@ -52,6 +52,7 @@ add_executable(ga
   src/ragdoll.cpp
   src/level.cpp
   src/free_editor.cpp
+  src/anim_editor.cpp
   src/terrain.cpp
   src/soldiers.cpp
   src/builder.cpp

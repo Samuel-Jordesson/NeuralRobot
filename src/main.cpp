@@ -21,6 +21,7 @@
 #include "builder.h"
 #include "gun_tuning.h"
 #include "free_editor.h"
+#include "anim_editor.h"
 #include "level.h"
 #if !GA_EDITOR
 #include "level_baked.h"
@@ -430,6 +431,8 @@ int main(int argc, char** argv) {
     bool debugWeights = args.debug;
 
     glm::mat4 globals[BONE_COUNT], skin[BONE_COUNT];
+    glm::mat4 animGlobals[BONE_COUNT], animSkin[BONE_COUNT]; // editor de animação
+    AnimEditor animEdit;
     RenderScene scene;
     scene.world = &world;
     scene.character = &character;
@@ -668,6 +671,18 @@ int main(int argc, char** argv) {
                         glm::rotate(glm::mat4(1.0f), args.yaw, glm::vec3(0, 1, 0));
                 pose = animator.pose();
                 footIK.apply(skeleton, pose, model, world, animator.groundedWeight(), sdt);
+                if (std::getenv("GA_FOOTLOG")) { // depuração: altura dos tornozelos andando
+                    glm::mat4 g[BONE_COUNT];
+                    computeGlobals(skeleton, pose, g);
+                    static int k = 0;
+                    static bool dn[2] = {true, true};
+                    for (int f = 0; f < 2; ++f) {
+                        float h = glm::vec3(model * g[f ? FOOT_R : FOOT_L][3]).y - visualY;
+                        if (!dn[f] && h < 0.19f) { dn[f] = true; std::printf("[pe] onda pe %d t=%.2f\n", f, ++k / 120.0f); }
+                        else if (dn[f] && h > 0.22f) dn[f] = false;
+                    }
+                    ++k;
+                }
             }
             args.pos = glm::vec3(body.pos.x, visualY, body.pos.z);
             std::printf("[sim] pos %.2f %.2f %.2f visualY %.2f estado %s\n", body.pos.x, body.pos.y, body.pos.z, visualY,
@@ -1058,6 +1073,7 @@ int main(int argc, char** argv) {
         float y = charYaw, pt = 0.35f;
         if (const char* c = getenv("GA_CAM")) std::sscanf(c, "%f %f %f %f %f", &p.x, &p.y, &p.z, &y, &pt); // depuração
         freeEdit.begin(p, y, pt, root);
+        if (getenv("GA_ANIM")) animEdit.begin(root, body.pos, charYaw); // depuração: abre direto o editor de animação
     }
 #endif
     while (!glfwWindowShouldClose(win)) {
@@ -1644,9 +1660,10 @@ int main(int argc, char** argv) {
             };
             for (int f = 0; f < 2; ++f) {
                 glm::vec3 foot = glm::vec3(charModel * globals[f == 0 ? FOOT_L : FOOT_R][3]);
-                const float h = foot.y - visualY; // tornozelo: ~11 cm com o pé apoiado
-                if (!footDown[f] && h < 0.14f && body.grounded) { addRipple(foot, 0.8f); footDown[f] = true; } // pisou
-                else if (footDown[f] && h > 0.17f) footDown[f] = false; // levantou: o próximo passo faz outra onda
+                // tornozelo: ~11 cm parado, ~16 cm apoiado andando, até ~32 cm no meio do passo
+                const float h = foot.y - visualY;
+                if (!footDown[f] && h < 0.19f && body.grounded) { addRipple(foot, 0.8f); footDown[f] = true; } // pisou
+                else if (footDown[f] && h > 0.22f) footDown[f] = false; // levantou: o próximo passo faz outra onda
             }
             for (Weapon* wp : {&weapon, &enemyFx}) {
                 for (const glm::vec3& p : wp->impacts) addRipple(p, 1.6f);
@@ -1812,7 +1829,26 @@ int main(int argc, char** argv) {
             scene.promptWorld = promptPos;
             scene.time = gameTime;
             FreeEditor::Context feCtx = freeEditContext();
-            if (freeEdit.active()) {
+            scene.bones = skin;
+            if (animEdit.active()) {
+                // editor de animação: boneco no palco, câmera orbitando, objeto animado
+                glm::vec3 eye;
+                glm::mat4 v, p;
+                animEdit.update(win, realDt, skeleton, v, p, eye);
+                computeGlobals(skeleton, animEdit.pose(), animGlobals);
+                computeSkinMatrices(skeleton, animGlobals, animSkin);
+                scene.bones = animSkin;
+                scene.characterModel = animEdit.stageMatrix();
+                scene.guns.clear();
+                if (int g = animEdit.propGun(); g >= 0 && g < 3)
+                    scene.guns.push_back({&gunMeshes[g], animEdit.propMatrix(animGlobals, *defs[g]) * defs[g]->meshFix});
+                scene.actors.clear();
+                scene.view = v;
+                scene.proj = p;
+                scene.camPos = eye;
+                scene.crosshairAlpha = 0.0f;
+                scene.promptAlpha = 0.0f;
+            } else if (freeEdit.active()) {
                 // edição livre: câmera voando, seleção e gestos; confirmar remonta o cenário
                 glm::vec3 eye;
                 glm::mat4 v, p;
@@ -1832,7 +1868,9 @@ int main(int argc, char** argv) {
             renderer.render(scene, realDt);
 
             menu::beginFrame();
-            if (freeEdit.active()) {
+            if (animEdit.active()) {
+                if (animEdit.drawUi(skeleton, {defs[0]->name, defs[1]->name, defs[2]->name})) animEdit.end();
+            } else if (freeEdit.active()) {
                 FreeEditor::Result r = freeEdit.drawUi(feCtx, scene.proj * scene.view, fbw, fbh);
                 using R = FreeEditor::Result;
                 if (r == R::Rebuild) setupScene(sceneId);
@@ -1847,6 +1885,10 @@ int main(int argc, char** argv) {
                     saveGunTuning(weaponsPath);
                     builder::start(root);
                 } else if (r == R::Settings) editorSettings = !editorSettings;
+                else if (r == R::Animate) {
+                    editorSettings = false;
+                    animEdit.begin(root, visualPos, charYaw);
+                }
                 else if (r == R::EditGun) {
                     freeEdit.end();
                     editorSettings = false;
