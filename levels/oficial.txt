@@ -1,6 +1,5 @@
 # Cenario (editor livre). Angulos em graus.
 prop mapa 0 0 0 0 1
-prop wooden_table_1 -0.527892 0 1.27134 394 0.21 wooden_table.glb
 door -0.45 0 -11.63 0.9 2.1
 spawn -1.5 0 -14.5 27.5937
 spawn 1.6 0 -17 -16.5915

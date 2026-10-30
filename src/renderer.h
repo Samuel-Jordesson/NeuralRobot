@@ -47,7 +47,15 @@ struct RenderScene {
         glm::vec3 color;
         int material; // 3 = metal liso, 4 = madeira
     };
-    std::vector<Panel> panels;
+    std::vector<Panel> panels; // material 6 = vidro (desenhado transparente depois da cena)
+
+    // luzes postas no editor (0 pontual, 1 spot, 2 ambiente)
+    struct Light {
+        int type = 0;
+        glm::vec3 pos{0.0f}, dir{0.0f, -1.0f, 0.0f}, color{1.0f}; // cor já com o brilho
+        float range = 8.0f, cosInner = 0.9f, cosOuter = 0.75f;
+    };
+    std::vector<Light> lights;
 
     // HUD
     float crosshairAlpha = 0.0f;
@@ -92,6 +100,12 @@ private:
     void createShadowMap();
 
     GraphicsSettings gs_;
+    glm::mat4 cullVP_{1.0f}; // visão do passo atual (corta os blocos do mapa fora dela)
+    void drawGlass(const RenderScene& s);
+    void updateRoof(const World& w);
+    GLuint roofTex_ = 0;   // mapa de teto (lado de dentro): R altura, G cobertura suavizada
+    int roofVersion_ = -1;
+    glm::vec4 roofRect_{0.0f};
     int w_ = 0, h_ = 0;   // janela
     int rw_ = 0, rh_ = 0; // resolução interna
     Shader skinned_, skinnedDepth_, skinnedPre_, world_, worldDepth_, worldPre_;

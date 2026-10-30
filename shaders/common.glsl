@@ -32,6 +32,20 @@ uniform int uClouds;
 uniform float uCloudCoverage;
 uniform int uCloudShadows;
 
+// lado de dentro: mapa de teto do cenário (onde tem teto a luz do céu quase não chega)
+uniform sampler2D uRoofMap; // R = altura do teto, G = quanto do entorno tem teto (suavizado)
+uniform int uRoofOn;
+uniform vec4 uRoofRect;     // x0, z0, 1/largura, 1/profundidade
+const float kIndoorSky = 0.08; // luz do céu que sobra dentro (entra por portas e janelas)
+
+// luzes postas no editor: 0 pontual, 1 spot, 2 ambiente
+#define MAX_LIGHTS 16
+uniform int uLightCount;
+uniform vec4 uLightPos[MAX_LIGHTS];   // xyz, alcance
+uniform vec4 uLightColor[MAX_LIGHTS]; // rgb já com o brilho, tipo
+uniform vec4 uLightDir[MAX_LIGHTS];   // xyz direção do spot, cosseno do cone interno
+uniform float uLightOuter[MAX_LIGHTS]; // cosseno do cone externo
+
 const float PI = 3.14159265;
 
 // ---------------------------------------------------------------- ruído
@@ -135,6 +149,57 @@ vec2 envBRDFApprox(float rough, float NdV) {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// 0 = fora, 1 = dentro (embaixo de teto, longe das aberturas)
+float indoorFactor(vec3 P) {
+    if (uRoofOn == 0) return 0.0;
+    vec2 uv = (P.xz - uRoofRect.xy) * uRoofRect.zw;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return 0.0;
+    vec2 r = texture(uRoofMap, uv).rg;
+    return P.y < r.x + 0.25 ? r.y : 0.0; // o próprio teto (de baixo) também é lado de dentro
+}
+
+// Luz direta de uma fonte na direção L (GGX + Lambert), já multiplicada por N·L.
+vec3 directLight(vec3 albedo, float metal, float rough, vec3 N, vec3 V, vec3 L, vec3 F0) {
+    float NdL = max(dot(N, L), 0.0);
+    if (NdL <= 0.0) return vec3(0.0);
+    vec3 H = normalize(V + L);
+    float NdV = max(dot(N, V), 1e-4), NdH = max(dot(N, H), 0.0), VdH = max(dot(V, H), 0.0);
+    float a2 = pow(rough * rough, 2.0);
+    float dd = NdH * NdH * (a2 - 1.0) + 1.0;
+    float D = a2 / (PI * dd * dd);
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    float G = (NdV / (NdV * (1.0 - k) + k)) * (NdL / (NdL * (1.0 - k) + k));
+    vec3 F = F0 + (1.0 - F0) * pow(1.0 - VdH, 5.0);
+    vec3 spec = D * G * F / max(4.0 * NdV * NdL, 1e-4);
+    return ((1.0 - F) * (1.0 - metal) * albedo / PI + spec) * NdL;
+}
+
+// Soma das luzes do editor no ponto P.
+vec3 editorLights(vec3 albedo, float metal, float rough, float occl, vec3 N, vec3 V, vec3 P, vec3 F0) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < MAX_LIGHTS; ++i) {
+        if (i >= uLightCount) break;
+        vec3 d = uLightPos[i].xyz - P;
+        float range = uLightPos[i].w;
+        float dist2 = dot(d, d);
+        if (dist2 > range * range) continue;
+        float x = dist2 / (range * range);
+        float window = (1.0 - x * x) * (1.0 - x * x); // apaga suave no fim do alcance
+        vec3 col = uLightColor[i].rgb;
+        int type = int(uLightColor[i].w + 0.5);
+        if (type == 2) { // ambiente: clareia por igual, sem direção
+            sum += col * (1.0 - metal) * albedo * occl * window * (1.0 - 0.6 * x);
+            continue;
+        }
+        vec3 L = d * inversesqrt(max(dist2, 1e-6));
+        float att = window / (dist2 + 0.25);
+        if (type == 1) att *= smoothstep(uLightOuter[i], uLightDir[i].w, dot(-L, uLightDir[i].xyz));
+        if (att <= 0.0) continue;
+        sum += directLight(albedo, metal, rough, N, V, L, F0) * col * att;
+    }
+    return sum;
+}
+
 vec3 shadePBR(vec3 albedo, float metal, float rough, float ao, vec3 N, vec3 P) {
     vec3 V = normalize(uCamPos - P);
     vec3 L = uSunDir;
@@ -156,6 +221,10 @@ vec3 shadePBR(vec3 albedo, float metal, float rough, float ao, vec3 N, vec3 P) {
     vec3 kd = (1.0 - F) * (1.0 - metal);
 
     float sh = NdL > 0.0 ? shadowFactor(P, N) * cloudShadow(P) : 0.0;
+    // dentro de lugar fechado: além do alcance das sombras o sol não entra
+    float indoor = indoorFactor(P);
+    float camDist = dot(P - uCamPos, uCamFwd);
+    sh *= 1.0 - indoor * smoothstep(uShadowDistance * 0.8, uShadowDistance, camDist);
     vec3 direct = (kd * albedo / PI + spec) * uSunColor * NdL * sh;
 
     // clarão do tiro (difusa, queda 1/d²)
@@ -173,7 +242,8 @@ vec3 shadePBR(vec3 albedo, float metal, float rough, float ao, vec3 N, vec3 P) {
     vec3 Fa = F0 * ab.x + ab.y;
     float specOcc = clamp(pow(NdV + occl, exp2(-16.0 * rough - 1.0)) - 1.0 + occl, 0.0, 1.0);
     vec3 ambient = (1.0 - Fa) * (1.0 - metal) * albedo * irr * occl + pref * Fa * specOcc;
-    return direct + ambient;
+    ambient *= mix(1.0, kIndoorSky, indoor); // céu não ilumina lugar fechado
+    return direct + ambient + editorLights(albedo, metal, rough, occl, N, V, P, F0);
 }
 
 // ---- pintura do chão (editor): até 4 camadas misturadas por um mapa de pesos em (x, z)

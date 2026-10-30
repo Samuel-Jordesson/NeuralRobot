@@ -575,6 +575,22 @@ int main(int argc, char** argv) {
         mats.resize(loadout.items.size());
         for (size_t i = 0; i < loadout.items.size(); ++i) mats[i] = gunMatrix((int)i, charModel);
     };
+    // luzes postas no editor (do layout do cenário atual)
+    auto sceneLights = [&]() {
+        scene.lights.clear();
+        if (sceneId < 0) return;
+        for (const LightPlace& li : layouts[sceneId].lights) {
+            RenderScene::Light l;
+            l.type = li.type;
+            l.pos = li.pos;
+            l.dir = li.dir();
+            l.color = li.color * li.intensity;
+            l.range = std::max(0.1f, li.range);
+            l.cosInner = std::cos(glm::radians(std::min(li.inner, li.outer)));
+            l.cosOuter = std::cos(glm::radians(li.outer));
+            scene.lights.push_back(l);
+        }
+    };
     auto sceneGuns = [&](const std::vector<glm::mat4>& mats) {
         scene.guns.clear();
         for (size_t i = 0; i < loadout.items.size(); ++i) {
@@ -630,6 +646,7 @@ int main(int argc, char** argv) {
             for (float t = 0.0f; t < args.simTime; t += sdt) {
                 body.step(world, dir, args.simRun ? animator.runSpeed() : animator.walkSpeed(), false, sdt);
                 arena.door.update(world, {&body}, sdt);
+                for (Door& d : arena.extraDoors) d.update(world, {&body}, sdt);
                 AnimInput ai;
                 ai.dt = sdt;
                 ai.speed = glm::length(glm::vec2(body.vel.x, body.vel.z));
@@ -730,9 +747,13 @@ int main(int argc, char** argv) {
             squad.update(world, {args.pos, glm::vec3(0.0f), true}, enemyFx, 1.0f / 60.0f);
             enemyFx.update(world, t + 1.0f / 60.0f < args.npcTime ? 1.0f / 60.0f : 0.0f);
         }
-        if (args.doorOpen) {
+        if (args.doorOpen) { // todas as portas abertas
             arena.door.angle = -1.2f;
             arena.door.update(world, {}, 1e-4f);
+            for (Door& d : arena.extraDoors) {
+                d.angle = -1.2f;
+                d.update(world, {}, 1e-4f);
+            }
         }
         for (int k = 0; k < args.killNpc && k < (int)squad.soldiers.size(); ++k) {
             squad.damage(k, 1000.0f, glm::vec3(0, 0, -1), args.pos, squad.soldiers[k]->body.pos + glm::vec3(0, 1.4f, 0));
@@ -743,6 +764,7 @@ int main(int argc, char** argv) {
         squad.addToScene(scene, gunMeshes[1]);
         arena.door.addPanels(scene.panels);
         for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
+        sceneLights();
         scene.view = cam.view;
         scene.proj = glm::perspective(fovy, (float)fbw / fbh, 0.05f, 1000.0f);
         scene.camPos = cam.pos;
@@ -1699,6 +1721,7 @@ int main(int argc, char** argv) {
             squad.addToScene(scene, gunMeshes[1]);
             arena.door.addPanels(scene.panels);
             for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
+            sceneLights();
             scene.view = cam.view;
             scene.proj = glm::perspective(cam.fov(), (float)fbw / fbh, 0.05f, 1000.0f);
             scene.camPos = cam.pos;

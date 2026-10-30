@@ -113,6 +113,17 @@ void addMeshColliders(World& w, const std::vector<glm::vec3>& tris, const glm::m
         }
     }
     count += slabs;
+    // mapa de teto (só do primeiro: a malha do cenário; objetos postos depois não mexem nele)
+    if (w.roof.nx == 0) {
+        static int version = 0;
+        w.roof.origin = lo;
+        w.roof.cell = cell;
+        w.roof.nx = nx;
+        w.roof.nz = nz;
+        w.roof.height.resize(ceil.size());
+        for (size_t k = 0; k < ceil.size(); ++k) w.roof.height[k] = ceil[k] > 1e8f ? RoofMap::kNoRoof : ceil[k];
+        w.roof.version = ++version;
+    }
     std::printf("[cenario] colisao gerada: %d caixas (%dx%d celulas de %.2f m)\n", count, nx, nz, cell);
 }
 
@@ -138,7 +149,7 @@ void carveColliders(World& w, const glm::vec3& lo, const glm::vec3& hi) {
 // ---------------------------------------------------------------- layout
 glm::mat4 PropPlace::matrix(const glm::mat4& pivot) const {
     return glm::translate(glm::mat4(1.0f), pos) * glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0, 1, 0)) *
-           glm::scale(glm::mat4(1.0f), glm::vec3(scale)) * pivot;
+           glm::scale(glm::mat4(1.0f), glm::vec3(scale) * stretch) * pivot;
 }
 
 PropPlace* LevelLayout::prop(const std::string& name) {
@@ -149,7 +160,13 @@ PropPlace* LevelLayout::prop(const std::string& name) {
 
 std::vector<DoorPlace> LevelLayout::allDoors() const {
     std::vector<DoorPlace> v;
-    if (hasDoor) v.push_back({doorHinge, doorWidth, doorHeight, true});
+    if (hasDoor) {
+        DoorPlace d;
+        d.hinge = doorHinge;
+        d.width = doorWidth;
+        d.height = doorHeight;
+        v.push_back(d);
+    }
     v.insert(v.end(), extraDoors.begin(), extraDoors.end());
     return v;
 }
@@ -163,12 +180,26 @@ std::string LevelLayout::serialize() const {
         if (!p.asset.empty()) o << " " << p.asset;
         o << "\n";
         for (auto& [m, path] : p.textures) o << "tex " << p.name << " " << m << " " << path << "\n";
+        if (p.stretch != glm::vec3(1.0f))
+            o << "stretch " << p.name << " " << p.stretch.x << " " << p.stretch.y << " " << p.stretch.z << "\n";
     }
     for (auto& [i, b] : boxes)
         o << "box " << i << " " << b.first.x << " " << b.first.y << " " << b.first.z << " " << b.second.x << " "
           << b.second.y << " " << b.second.z << "\n";
     if (hasDoor)
         o << "door " << doorHinge.x << " " << doorHinge.y << " " << doorHinge.z << " " << doorWidth << " " << doorHeight << "\n";
+    // portas extras: dobradiça, largura, altura, ângulo (graus), tipo (m = espelhada, v = vidro)
+    for (const DoorPlace& d : extraDoors) {
+        std::string flags = std::string(d.mirror ? "m" : "") + (d.glass ? "v" : "");
+        o << "door3 " << d.hinge.x << " " << d.hinge.y << " " << d.hinge.z << " " << d.width << " " << d.height << " "
+          << glm::degrees(d.yaw) << " " << (flags.empty() ? "-" : flags) << "\n";
+    }
+    if (extraDoors.empty()) o << "nodoors\n"; // tirou todas: o arquivo não volta para as de fábrica
+    // luzes: tipo x y z giro inclinação r g b brilho alcance cone-interno cone-externo
+    for (const LightPlace& li : lights)
+        o << "light " << li.type << " " << li.pos.x << " " << li.pos.y << " " << li.pos.z << " " << glm::degrees(li.yaw) << " "
+          << glm::degrees(li.pitch) << " " << li.color.r << " " << li.color.g << " " << li.color.b << " " << li.intensity
+          << " " << li.range << " " << li.inner << " " << li.outer << "\n";
     for (auto& [i, g] : guns)
         o << "gun " << i << " " << g.first.x << " " << g.first.y << " " << g.first.z << " " << glm::degrees(g.second) << "\n";
     for (size_t i = 0; i < spawns.size(); ++i)
@@ -186,7 +217,7 @@ std::string LevelLayout::serialize() const {
 bool LevelLayout::parse(const std::string& text) {
     std::istringstream in(text);
     std::string line;
-    bool any = false, spawnSeen = false, door2Seen = false;
+    bool any = false, spawnSeen = false, door2Seen = false, lightSeen = false;
     while (std::getline(in, line)) {
         std::istringstream l(line);
         std::string k;
@@ -218,8 +249,34 @@ bool LevelLayout::parse(const std::string& text) {
             DoorPlace d;
             std::string ax;
             l >> d.hinge.x >> d.hinge.y >> d.hinge.z >> d.width >> d.height >> ax;
-            d.alongX = ax != "z";
+            d.yaw = ax.empty() || ax[0] != 'z' ? 0.0f : -glm::half_pi<float>();
+            d.mirror = ax.size() > 1 && ax[1] == 'm'; // "xm"/"zm": folha espelhada
             extraDoors.push_back(d);
+        } else if (k == "door3" || k == "nodoors") { // porta em qualquer ângulo (formato novo)
+            if (!door2Seen) { extraDoors.clear(); door2Seen = true; }
+            if (k == "nodoors") { any = true; continue; }
+            DoorPlace d;
+            float yawDeg = 0.0f;
+            std::string flags;
+            l >> d.hinge.x >> d.hinge.y >> d.hinge.z >> d.width >> d.height >> yawDeg >> flags;
+            d.yaw = glm::radians(yawDeg);
+            d.mirror = flags.find('m') != std::string::npos;
+            d.glass = flags.find('v') != std::string::npos;
+            extraDoors.push_back(d);
+        } else if (k == "stretch") {
+            std::string name;
+            glm::vec3 s3(1.0f);
+            l >> name >> s3.x >> s3.y >> s3.z;
+            if (PropPlace* e = prop(name)) e->stretch = s3;
+        } else if (k == "light") {
+            if (!lightSeen) { lights.clear(); lightSeen = true; }
+            LightPlace li;
+            float y = 0.0f, pi = -90.0f;
+            l >> li.type >> li.pos.x >> li.pos.y >> li.pos.z >> y >> pi >> li.color.r >> li.color.g >> li.color.b >> li.intensity
+                >> li.range >> li.inner >> li.outer;
+            li.yaw = glm::radians(y);
+            li.pitch = glm::radians(pi);
+            lights.push_back(li);
         } else if (k == "gun") {
             int i;
             glm::vec3 g;
@@ -320,9 +377,11 @@ Arena buildTestScene(World& w, LevelLayout& L, std::vector<Table>& tables) {
 
 // ---------------------------------------------------------------- cenário oficial
 namespace {
-// Mapa blocado no Blender (Untitled.fbx, em centímetros): corredor no meio (a esfera na origem
-// marca onde o personagem começa), sala com móveis no fundo (z < -11,6) e sala à esquerda (x < -1,6).
-const glm::mat4 kMapPivot = glm::scale(glm::mat4(1.0f), glm::vec3(0.01f));
+// Mapa montado no Blender (Novomapa.glb, em metros): corredor no meio (a esfera na origem marca
+// onde o personagem começa), sala com móveis no fundo (z < -11,6) e sala à esquerda (x < -1,6),
+// com a cidade em volta. O chão do arquivo fica 7 cm abaixo de zero: sobe para os pés apoiarem.
+const char* kMapFile = "Novomapa.glb";
+const glm::mat4 kMapPivot = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0737f, 0.0f));
 
 // Caixa (lo, hi) do mundo levada para o espaço de um objeto (a caixa que contém os 8 cantos).
 std::pair<glm::vec3, glm::vec3> toLocal(const glm::mat4& model, const glm::vec3& lo, const glm::vec3& hi) {
@@ -337,16 +396,14 @@ std::pair<glm::vec3, glm::vec3> toLocal(const glm::mat4& model, const glm::vec3&
     return {a, b};
 }
 
-// Vão de uma porta no mundo: atravessa a parede (0,25 m para cada lado da linha da dobradiça).
+// Vão de uma porta no mundo: atravessa a parede (0,25 m para cada lado da linha da folha).
+// Em ângulo (fora de X/Z) é a caixa que contém a folha.
 std::pair<glm::vec3, glm::vec3> doorCut(const DoorPlace& d) {
-    glm::vec3 lo, hi;
-    if (d.alongX) {
-        lo = {d.hinge.x, d.hinge.y - 0.05f, d.hinge.z - 0.25f};
-        hi = {d.hinge.x + d.width, d.hinge.y + d.height, d.hinge.z + 0.25f};
-    } else {
-        lo = {d.hinge.x - 0.25f, d.hinge.y - 0.05f, d.hinge.z};
-        hi = {d.hinge.x + 0.25f, d.hinge.y + d.height, d.hinge.z + d.width};
-    }
+    const glm::vec3 a = d.hinge, b = d.end();
+    const glm::vec3 n = glm::abs(glm::vec3(-d.axis().z, 0.0f, d.axis().x)) * 0.25f; // espessura, para os dois lados
+    glm::vec3 lo = glm::min(a, b) - n, hi = glm::max(a, b) + n;
+    lo.y = d.hinge.y - 0.05f;
+    hi.y = d.hinge.y + d.height;
     return {lo, hi};
 }
 
@@ -367,8 +424,22 @@ void defaultOfficialLayout(LevelLayout& L) {
     L.doorHinge = {-0.45f, 0.0f, -11.63f};
     L.doorWidth = 0.9f;
     L.doorHeight = 2.1f;
-    // porta lateral: do corredor para a sala da esquerda
-    L.extraDoors = {{{-1.62f, 0.0f, 0.05f}, 0.92f, 2.1f, false}};
+    // porta lateral: do corredor para a sala da esquerda; porta do norte: do fim do corredor (atrás
+    // do início) para a sala com piso xadrez, no vão da parede de tijolos (Novomapa.glb)
+    auto door = [&](glm::vec3 hinge, float w, float h, float yawDeg, bool mirror) {
+        DoorPlace d;
+        d.hinge = hinge;
+        d.width = w;
+        d.height = h;
+        d.yaw = glm::radians(yawDeg);
+        d.mirror = mirror;
+        L.extraDoors.push_back(d);
+    };
+    door({-1.62f, 0.0f, 0.05f}, 0.92f, 2.1f, -90.0f, false);
+    door({-0.94f, 0.0f, 4.11f}, 1.03f, 2.09f, 0.0f, false);
+    // entrada da casa (parede leste da sala do norte, para a cidade): porta dupla, uma folha de cada lado
+    door({8.49f, 0.0f, 7.05f}, 1.435f, 2.5f, -90.0f, false);
+    door({8.49f, 0.0f, 8.485f}, 1.435f, 2.5f, -90.0f, true);
     L.spawns = {{-1.5f, 0.0f, -14.5f}, {1.6f, 0.0f, -17.0f}};
     glm::vec3 doorC = L.doorHinge + glm::vec3(L.doorWidth * 0.5f, 0.0f, 0.0f);
     for (const glm::vec3& p : L.spawns) L.spawnYaw.push_back(std::atan2(doorC.x - p.x, doorC.z - p.z));
@@ -380,6 +451,7 @@ bool OfficialLevel::load(const std::string& root, const LevelLayout& L) {
     std::vector<std::pair<glm::vec3, glm::vec3>> cuts;
     const glm::mat4 mapM = propMatrix(L, "mapa", kMapPivot);
     for (const DoorPlace& d : L.allDoors()) {
+        if (!d.axisAligned()) continue; // em ângulo: não recorta a parede (põe num vão que já existe)
         auto [lo, hi] = doorCut(d);
         cuts.push_back(toLocal(mapM, lo, hi));
     }
@@ -393,11 +465,12 @@ bool OfficialLevel::load(const std::string& root, const LevelLayout& L) {
     o.maxTextureSize = 1024;
     o.skipMesh = "Icosphere"; // marcador do início, não aparece no jogo
     o.keepSource = true;
+    o.chunkSize = 8.0f; // mapa grande: desenha só os blocos que aparecem
     o.triangles = &mapTris;
     o.cuts = cuts;
     map.reset();
     mapTris.clear();
-    if (!map.load(root + "/Untitled.fbx", nullptr, o)) return false;
+    if (!map.load(root + "/" + kMapFile, nullptr, o)) return false;
     cuts_ = cuts;
     loaded = true;
     applyTextures(root, L);
@@ -534,27 +607,41 @@ void AssetLibrary::stepDynamics(World& w, std::vector<RenderScene::Prop>& props,
 }
 
 void addExtraDoors(World& w, Arena& a, const LevelLayout& L) {
-    const glm::vec3 frame(0.22f, 0.17f, 0.13f);
-    for (const DoorPlace& d : L.extraDoors) {
-        const float top = d.hinge.y + d.height, y0 = d.hinge.y;
-        auto box = [&](glm::vec3 mn, glm::vec3 mx) { w.boxes.push_back({mn, mx, frame}); };
-        if (d.alongX) {
-            const float x0 = d.hinge.x, x1 = x0 + d.width, z = d.hinge.z;
-            box({x0 - 0.06f, y0, z - 0.09f}, {x0, top + 0.06f, z + 0.09f});
-            box({x1, y0, z - 0.09f}, {x1 + 0.06f, top + 0.06f, z + 0.09f});
-            box({x0 - 0.06f, top, z - 0.09f}, {x1 + 0.06f, top + 0.06f, z + 0.09f});
-        } else {
-            const float z0 = d.hinge.z, z1 = z0 + d.width, x = d.hinge.x;
-            box({x - 0.09f, y0, z0 - 0.06f}, {x + 0.09f, top + 0.06f, z0});
-            box({x - 0.09f, y0, z1}, {x + 0.09f, top + 0.06f, z1 + 0.06f});
-            box({x - 0.09f, top, z0 - 0.06f}, {x + 0.09f, top + 0.06f, z1 + 0.06f});
+    // ponta de uma porta encostada na de outra (porta dupla): sem poste do batente no meio
+    auto sharedEdge = [&](const DoorPlace& d, const glm::vec3& p) {
+        for (const DoorPlace& o : L.extraDoors) {
+            if (&o == &d) continue;
+            if (glm::length(o.hinge - p) < 0.02f || glm::length(o.end() - p) < 0.02f) return true;
         }
+        return false;
+    };
+    for (const DoorPlace& d : L.extraDoors) {
         Door e;
         e.hinge = d.hinge;
         e.width = d.width;
         e.height = d.height;
-        e.thick = 0.05f;
-        e.base = d.alongX ? 0.0f : -glm::half_pi<float>();
+        e.thick = d.glass ? 0.04f : 0.05f;
+        e.base = d.yaw;
+        e.glass = d.glass;
+        e.framed = true;
+        bool post0 = !sharedEdge(d, d.hinge), post1 = !sharedEdge(d, d.end());
+        if (d.mirror) { // dobradiça na outra ponta, folha virada para trás
+            e.hinge = d.end();
+            e.base += glm::pi<float>();
+            std::swap(post0, post1);
+        }
+        e.post0 = post0;
+        e.post1 = post1;
+        // batente: o desenho fica na porta (gira junto); aqui só a colisão dos postes
+        for (int k = 0; k < 2; ++k) {
+            if (!(k ? post1 : post0)) continue;
+            const glm::vec3 p = e.hinge + glm::vec3(std::cos(e.base), 0.0f, -std::sin(e.base)) * (k ? e.width + 0.03f : -0.03f);
+            Box b{p - glm::vec3(0.07f, 0.0f, 0.07f), p + glm::vec3(0.07f, d.height + 0.06f, 0.07f) + glm::vec3(0, d.hinge.y, 0),
+                  glm::vec3(0.5f)};
+            b.min.y = d.hinge.y;
+            b.hidden = true;
+            w.boxes.push_back(b);
+        }
         w.boxes.push_back({glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), true, false});
         e.collider = (int)w.boxes.size() - 1;
         a.extraDoors.push_back(e);

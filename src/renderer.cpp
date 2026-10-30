@@ -149,7 +149,7 @@ GpuProfiler g_prof;
 
 // unidades de textura fixas usadas pela iluminação
 enum TexUnit { kUnitIrradiance = 4, kUnitEnv = 5, kUnitAO = 6, kUnitShadow = 7, kUnitSkyCube = 8, kUnitNoise = 9,
-               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12 };
+               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12, kUnitRoof = 13 };
 
 // Textura de ruído que repete sem emenda (256x256), lida pelos shaders no lugar de ruído procedural:
 // R = fbm grande (4 células), G = ruído médio (32), B = ruído fino (128), A = fbm (8 células).
@@ -239,6 +239,9 @@ bool Renderer::init(const std::string& dir, int width, int height) {
         sh->set("uPaintAlbedo", (int)kUnitPaintA);
         sh->set("uPaintNormal", (int)kUnitPaintN);
         sh->set("uPaintOn", 0);
+        sh->set("uRoofMap", (int)kUnitRoof);
+        sh->set("uRoofOn", 0);
+        sh->set("uLightCount", 0);
     }
 
     cube_ = makeCube();
@@ -550,6 +553,35 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
     sh.set("uEnvMaxLod", (float)(kEnvMips - 1));
     sh.set("uUseSSAO", gs_.ssao ? 1 : 0);
     sh.set("uRenderSize", glm::vec2((float)rw_, (float)rh_));
+    // lado de dentro (mapa de teto) e luzes do editor
+    sh.set("uRoofOn", roofTex_ && roofVersion_ > 0 ? 1 : 0);
+    sh.set("uRoofRect", roofRect_);
+    {
+        const int kMax = 16;
+        // mais de 16: ficam as mais perto da câmera
+        std::vector<const RenderScene::Light*> ls;
+        for (const RenderScene::Light& l : s.lights) ls.push_back(&l);
+        if ((int)ls.size() > kMax)
+            std::partial_sort(ls.begin(), ls.begin() + kMax, ls.end(), [&](auto* a, auto* b) {
+                return glm::length(a->pos - s.camPos) - a->range < glm::length(b->pos - s.camPos) - b->range;
+            });
+        const int n = std::min(kMax, (int)ls.size());
+        glm::vec4 pos[kMax], col[kMax], dir[kMax];
+        float outer[kMax];
+        for (int i = 0; i < n; ++i) {
+            pos[i] = glm::vec4(ls[i]->pos, ls[i]->range);
+            col[i] = glm::vec4(ls[i]->color, (float)ls[i]->type);
+            dir[i] = glm::vec4(glm::normalize(ls[i]->dir), ls[i]->cosInner);
+            outer[i] = ls[i]->cosOuter;
+        }
+        sh.set("uLightCount", n);
+        if (n) {
+            glUniform4fv(glGetUniformLocation(sh.id(), "uLightPos"), n, &pos[0].x);
+            glUniform4fv(glGetUniformLocation(sh.id(), "uLightColor"), n, &col[0].x);
+            glUniform4fv(glGetUniformLocation(sh.id(), "uLightDir"), n, &dir[0].x);
+            glUniform1fv(glGetUniformLocation(sh.id(), "uLightOuter"), n, outer);
+        }
+    }
     sh.set("uCharPos", s.characterPos);
     sh.set("uClouds", gs_.clouds ? 1 : 0);
     sh.set("uCloudCoverage", gs_.cloudCoverage);
@@ -563,6 +595,79 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
     // névoa de altura
     sh.set("uFogDensity", 0.0022f * gs_.fogDensity);
     sh.set("uFogFalloff", 0.06f);
+}
+
+// Mapa de teto do cenário em textura: R = altura do teto, G = parte do entorno (~1,5 m) com teto.
+// O borrado faz a luz do céu entrar um pouco pelas portas e janelas.
+void Renderer::updateRoof(const World& w) {
+    if (w.roof.version == roofVersion_) return;
+    roofVersion_ = w.roof.version;
+    if (w.roof.nx == 0) {
+        roofVersion_ = 0;
+        return;
+    }
+    const int nx = w.roof.nx, nz = w.roof.nz;
+    std::vector<float> cover(w.roof.height.size()), tmp(cover.size());
+    for (size_t k = 0; k < cover.size(); ++k) cover[k] = w.roof.height[k] < RoofMap::kNoRoof ? 1.0f : 0.0f;
+    const int r = std::max(1, (int)std::round(0.7f / w.roof.cell));
+    for (int pass = 0; pass < 2; ++pass) { // caixa separável duas vezes (quase gaussiano)
+        for (int z = 0; z < nz; ++z) {
+            float acc = 0.0f;
+            for (int x = -r; x <= r; ++x) acc += cover[(size_t)z * nx + std::clamp(x, 0, nx - 1)];
+            for (int x = 0; x < nx; ++x) {
+                tmp[(size_t)z * nx + x] = acc / (2 * r + 1);
+                acc += cover[(size_t)z * nx + std::min(x + r + 1, nx - 1)] - cover[(size_t)z * nx + std::max(x - r, 0)];
+            }
+        }
+        for (int x = 0; x < nx; ++x) {
+            float acc = 0.0f;
+            for (int z = -r; z <= r; ++z) acc += tmp[(size_t)std::clamp(z, 0, nz - 1) * nx + x];
+            for (int z = 0; z < nz; ++z) {
+                cover[(size_t)z * nx + x] = acc / (2 * r + 1);
+                acc += tmp[(size_t)std::min(z + r + 1, nz - 1) * nx + x] - tmp[(size_t)std::max(z - r, 0) * nx + x];
+            }
+        }
+    }
+    std::vector<float> px(cover.size() * 2);
+    for (size_t k = 0; k < cover.size(); ++k) {
+        px[k * 2] = w.roof.height[k];
+        px[k * 2 + 1] = w.roof.height[k] < RoofMap::kNoRoof ? cover[k] : 0.0f; // sem teto em cima: fora
+    }
+    if (!roofTex_) glGenTextures(1, &roofTex_);
+    glActiveTexture(GL_TEXTURE0 + kUnitRoof);
+    glBindTexture(GL_TEXTURE_2D, roofTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, nx, nz, 0, GL_RG, GL_FLOAT, px.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glActiveTexture(GL_TEXTURE0);
+    const float sx = nx * w.roof.cell, sz = nz * w.roof.cell;
+    roofRect_ = glm::vec4(w.roof.origin.x, w.roof.origin.y, 1.0f / sx, 1.0f / sz);
+}
+
+// Vidro das portas: transparente, por cima da cena opaca (testa profundidade, não escreve).
+void Renderer::drawGlass(const RenderScene& s) {
+    bool any = false;
+    for (const RenderScene::Panel& p : s.panels) any |= p.material == 6;
+    if (!any) return;
+    world_.use();
+    world_.set("uViewProj", s.proj * s.view);
+    setLightingUniforms(world_, s);
+    world_.set("uPaintOn", 0);
+    world_.set("uMaterial", 6);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    for (const RenderScene::Panel& p : s.panels) {
+        if (p.material != 6) continue;
+        world_.set("uModel", p.model);
+        world_.set("uColor", p.color);
+        cube_.draw();
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
@@ -591,6 +696,7 @@ void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
         sphere_.draw();
     }
     for (const RenderScene::Panel& p : s.panels) {
+        if (p.material == 6) continue; // vidro: passo transparente (drawGlass)
         sh.set("uModel", p.model);
         if (color) {
             sh.set("uMaterial", p.material);
@@ -618,9 +724,12 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
                            bool material) {
     sh.set("uModel", model);
     sh.setMat4Array("uBones", bones, BONE_COUNT);
+    // modelos divididos em blocos (mapa): só o que cabe na visão deste passo
+    const glm::mat4 mvp = cullVP_ * model;
+    const glm::mat4* cull = m.chunks.empty() ? nullptr : &mvp;
     if (!material) {
         if (!m.hasAlphaCut) {
-            m.draw();
+            m.draw(cull);
             return;
         }
         // sombra/profundidade de folhagem: só o recorte da textura
@@ -630,7 +739,7 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
             const CharacterModel::Material& mat = m.materials[m.parts[i].material];
             sh.set("uAlphaCut", mat.alphaCut ? 1 : 0);
             glBindTexture(GL_TEXTURE_2D, mat.texBase);
-            m.drawPart(i);
+            m.drawPart(i, cull);
         }
         sh.set("uAlphaCut", 0);
         return;
@@ -654,12 +763,13 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
         sh.set("uEmissive", mat.emissiveFactor);
         sh.set("uUseAO", mat.useOcclusion ? 1 : 0);
         sh.set("uAlphaCut", mat.alphaCut ? 1 : 0);
-        m.drawPart(i);
+        m.drawPart(i, cull);
     }
 }
 
 // Mundo + personagem + arma com o par de shaders do passo.
 void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, Pass pass, const glm::mat4& vp) {
+    cullVP_ = vp;
     bool color = pass == Pass::Color;
     if (color) {
         glEnable(GL_CULL_FACE);
@@ -839,6 +949,7 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     const glm::mat4 invVP = glm::inverse(vp);
     const float skyFogDist = 700.0f;
     g_prof.mark("inicio");
+    if (s.world) updateRoof(*s.world);
     updateSun();
     updateEnvironment(s.time);
     g_prof.mark("ceu");
@@ -946,7 +1057,8 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     fullscreen();
     glDepthMask(GL_TRUE);
 
-    // efeitos transparentes por cima de tudo (testam profundidade, não escrevem)
+    // vidro (portas) e efeitos transparentes por cima de tudo (testam profundidade, não escrevem)
+    drawGlass(s);
     drawEffects(s);
     glDepthFunc(GL_LESS);
     glDisable(GL_DEPTH_TEST);

@@ -91,22 +91,46 @@ Door::Touch Door::touch(const CharacterBody& b) const {
 }
 
 void Door::addPanels(std::vector<RenderScene::Panel>& out) const {
-    glm::mat4 leaf = glm::translate(glm::mat4(1.0f), hinge) * glm::rotate(glm::mat4(1.0f), angle + base, glm::vec3(0, 1, 0));
-    auto part = [&](glm::vec3 c, glm::vec3 size, glm::vec3 col, int mat) {
-        out.push_back({leaf * glm::translate(glm::mat4(1.0f), c) * glm::scale(glm::mat4(1.0f), size), col, mat});
+    const glm::mat4 still = glm::translate(glm::mat4(1.0f), hinge) * glm::rotate(glm::mat4(1.0f), base, glm::vec3(0, 1, 0));
+    const glm::mat4 leaf = glm::translate(glm::mat4(1.0f), hinge) * glm::rotate(glm::mat4(1.0f), angle + base, glm::vec3(0, 1, 0));
+    auto part = [&](const glm::mat4& m, glm::vec3 c, glm::vec3 size, glm::vec3 col, int mat) {
+        out.push_back({m * glm::translate(glm::mat4(1.0f), c) * glm::scale(glm::mat4(1.0f), size), col, mat});
     };
-    const glm::vec3 wood(0.42f, 0.24f, 0.12f), metal(0.75f, 0.72f, 0.66f);
-    part({width * 0.5f, height * 0.5f, 0.0f}, {width - 0.01f, height - 0.01f, thick}, wood, 4);
+    const glm::vec3 wood(0.42f, 0.24f, 0.12f), metal(0.75f, 0.72f, 0.66f), alu(0.55f, 0.56f, 0.58f);
+    // batente (parado, gira só com o ângulo da porta)
+    if (framed) {
+        const glm::vec3 jamb = glass ? alu * 0.6f : glm::vec3(0.22f, 0.17f, 0.13f);
+        const int jm = glass ? 3 : 4;
+        if (post0) part(still, {-0.03f, height * 0.5f + 0.03f, 0.0f}, {0.06f, height + 0.06f, 0.18f}, jamb, jm);
+        if (post1) part(still, {width + 0.03f, height * 0.5f + 0.03f, 0.0f}, {0.06f, height + 0.06f, 0.18f}, jamb, jm);
+        float x0 = post0 ? -0.06f : 0.0f, x1 = post1 ? width + 0.06f : width;
+        part(still, {(x0 + x1) * 0.5f, height + 0.03f, 0.0f}, {x1 - x0, 0.06f, 0.18f}, jamb, jm);
+    }
+    if (glass) {
+        // moldura de alumínio, vidro no meio e puxador vertical dos dois lados
+        const float f = 0.07f;
+        part(leaf, {width * 0.5f, f * 0.5f, 0.0f}, {width - 0.01f, f, thick}, alu, 3);
+        part(leaf, {width * 0.5f, height - f * 0.5f, 0.0f}, {width - 0.01f, f, thick}, alu, 3);
+        part(leaf, {f * 0.5f, height * 0.5f, 0.0f}, {f, height - 0.01f, thick}, alu, 3);
+        part(leaf, {width - f * 0.5f, height * 0.5f, 0.0f}, {f, height - 0.01f, thick}, alu, 3);
+        part(leaf, {width * 0.5f, height * 0.5f, 0.0f}, {width - 2.0f * f, height - 2.0f * f, 0.012f}, glm::vec3(0.75f, 0.85f, 0.85f), 6);
+        for (float z : {-1.0f, 1.0f}) {
+            part(leaf, {width - 0.14f, 1.05f, z * (thick * 0.5f + 0.045f)}, {0.025f, 0.6f, 0.025f}, metal, 3);
+            for (float y : {0.8f, 1.3f}) part(leaf, {width - 0.14f, y, z * (thick * 0.5f + 0.02f)}, {0.02f, 0.02f, 0.05f}, metal, 3);
+        }
+        return;
+    }
+    part(leaf, {width * 0.5f, height * 0.5f, 0.0f}, {width - 0.01f, height - 0.01f, thick}, wood, 4);
     // almofadas (painéis em relevo) dos dois lados
     for (float y : {0.62f, 1.68f})
         for (float z : {-1.0f, 1.0f})
-            part({width * 0.5f, y, z * (thick * 0.5f + 0.006f)}, {width * 0.7f, 0.8f, 0.012f}, wood * 0.85f, 4);
+            part(leaf, {width * 0.5f, y, z * (thick * 0.5f + 0.006f)}, {width * 0.7f, 0.8f, 0.012f}, wood * 0.85f, 4);
     // maçanetas dos dois lados e dobradiças
     for (float z : {-1.0f, 1.0f}) {
-        part({width - 0.12f, 1.0f, z * (thick * 0.5f + 0.035f)}, {0.03f, 0.03f, 0.07f}, metal, 3);
-        part({width - 0.17f, 1.0f, z * (thick * 0.5f + 0.07f)}, {0.13f, 0.025f, 0.025f}, metal, 3);
+        part(leaf, {width - 0.12f, 1.0f, z * (thick * 0.5f + 0.035f)}, {0.03f, 0.03f, 0.07f}, metal, 3);
+        part(leaf, {width - 0.17f, 1.0f, z * (thick * 0.5f + 0.07f)}, {0.13f, 0.025f, 0.025f}, metal, 3);
     }
-    for (float y : {0.3f, height - 0.3f}) part({0.0f, y, 0.0f}, {0.03f, 0.12f, thick + 0.02f}, metal * 0.5f, 3);
+    for (float y : {0.3f, height - 0.3f}) part(leaf, {0.0f, y, 0.0f}, {0.03f, 0.12f, thick + 0.02f}, metal * 0.5f, 3);
 }
 
 Arena Arena::build(World& w) {

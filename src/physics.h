@@ -20,8 +20,20 @@ struct Ball {
 
 struct Terrain;
 
+// Teto em cima de cada ponto do chão (gerado da malha do cenário): o que tem teto é lado de dentro,
+// onde a luz do céu não chega. height = altura do teto (sem teto: kNoRoof).
+struct RoofMap {
+    static constexpr float kNoRoof = 50.0f;
+    glm::vec2 origin{0.0f};
+    float cell = 0.15f;
+    int nx = 0, nz = 0;
+    std::vector<float> height;
+    int version = 0; // muda a cada cenário montado (o renderizador refaz a textura)
+};
+
 struct World {
     float groundY = 0.0f;
+    RoofMap roof;
     const Terrain* terrain = nullptr; // relevo esculpido no editor (chão em cima do groundY)
     // Chão em (x, z): o relevo, se houver, senão groundY.
     float floorAt(float x, float z) const;

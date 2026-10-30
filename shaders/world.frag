@@ -6,7 +6,7 @@ in vec3 vNormal;
 in vec3 vLocal;
 out vec4 FragColor;
 
-uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta)
+uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta), 6 = vidro
 uniform vec3 uColor;
 uniform vec3 uBoxMin, uBoxMax; // limites do bloco (desgaste nas quinas)
 
@@ -42,6 +42,14 @@ void main() {
         albedo = uColor;
         rough = 0.3;
         metal = 1.0;
+    } else if (uMaterial == 6) {
+        // vidro: quase só reflexo; transparência pelo ângulo (Fresnel), passo transparente
+        if (!gl_FrontFacing) N = -N;
+        vec3 V = normalize(uCamPos - vPos);
+        float fres = pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        vec3 col = shadePBR(uColor * 0.06, 0.0, 0.04, 1.0, N, vPos);
+        FragColor = vec4(col + uColor * 0.02, mix(0.16, 0.85, fres));
+        return;
     } else if (uMaterial == 4) {
         // madeira pintada gasta: veios ao longo da altura da peça (coordenadas locais do cubo)
         vec2 p = vec2(vLocal.x * 3.0 + vLocal.z * 3.0, vLocal.y * 0.4);

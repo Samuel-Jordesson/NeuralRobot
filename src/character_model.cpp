@@ -11,13 +11,16 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <numeric>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -171,6 +174,72 @@ void downscale(Image& im, int maxSize) {
     }
 }
 
+bool decodeTexture(const aiTexture* tex, const char* name, int maxSize, Image& out) {
+    int w, h, c;
+    if (tex->mHeight == 0) {
+        unsigned char* px = stbi_load_from_memory((const stbi_uc*)tex->pcData, (int)tex->mWidth, &w, &h, &c, 4);
+        if (!px) return false;
+        out.px.assign(px, px + (size_t)w * h * 4);
+        stbi_image_free(px);
+    } else {
+        w = (int)tex->mWidth;
+        h = (int)tex->mHeight;
+        out.px.resize((size_t)w * h * 4);
+        for (int i = 0; i < w * h; ++i) {
+            out.px[i * 4 + 0] = tex->pcData[i].r;
+            out.px[i * 4 + 1] = tex->pcData[i].g;
+            out.px[i * 4 + 2] = tex->pcData[i].b;
+            out.px[i * 4 + 3] = tex->pcData[i].a;
+        }
+    }
+    out.w = w;
+    out.h = h;
+    out.name = name;
+    downscale(out, maxSize);
+    return true;
+}
+
+// Imagens já decodificadas em paralelo durante o load (textura embutida -> imagem reduzida).
+std::map<const aiTexture*, Image>* g_decoded = nullptr;
+
+const aiTextureType kAllTextureTypes[] = {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE,   aiTextureType_METALNESS,
+                                          aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_UNKNOWN, aiTextureType_NORMALS,
+                                          aiTextureType_EMISSIVE,   aiTextureType_SPECULAR,  aiTextureType_LIGHTMAP,
+                                          aiTextureType_AMBIENT_OCCLUSION};
+
+// Decodifica de uma vez, em várias threads, todas as texturas embutidas que esses materiais usam.
+void predecode(const aiScene* sc, const std::vector<int>& matIds, int maxSize, std::map<const aiTexture*, Image>& out) {
+    std::vector<std::pair<const aiTexture*, std::string>> todo;
+    for (int id : matIds)
+        for (aiTextureType type : kAllTextureTypes) {
+            aiString path;
+            if (sc->mMaterials[id]->GetTexture(type, 0, &path) != AI_SUCCESS) continue;
+            const aiTexture* tex = sc->GetEmbeddedTexture(path.C_Str());
+            if (tex && !out.count(tex)) {
+                out[tex];
+                todo.push_back({tex, path.C_Str()});
+            }
+        }
+    if (todo.size() < 2) {
+        out.clear();
+        return;
+    }
+    std::vector<Image> imgs(todo.size());
+    std::vector<char> ok(todo.size(), 0);
+    std::atomic<size_t> next{0};
+    auto work = [&]() {
+        for (size_t i; (i = next++) < todo.size();) ok[i] = decodeTexture(todo[i].first, todo[i].second.c_str(), maxSize, imgs[i]);
+    };
+    const unsigned n = std::max(1u, std::min<unsigned>(std::thread::hardware_concurrency(), (unsigned)todo.size()));
+    std::vector<std::thread> th;
+    for (unsigned k = 1; k < n; ++k) th.emplace_back(work);
+    work();
+    for (std::thread& t : th) t.join();
+    out.clear();
+    for (size_t i = 0; i < todo.size(); ++i)
+        if (ok[i]) out[todo[i].first] = std::move(imgs[i]);
+}
+
 bool decodeEmbedded(const aiScene* sc, const aiMaterial* m, std::initializer_list<aiTextureType> types, int maxSize,
                     Image& out) {
     for (aiTextureType type : types) {
@@ -178,28 +247,14 @@ bool decodeEmbedded(const aiScene* sc, const aiMaterial* m, std::initializer_lis
         if (m->GetTexture(type, 0, &path) != AI_SUCCESS) continue;
         const aiTexture* tex = sc->GetEmbeddedTexture(path.C_Str());
         if (!tex) continue;
-        int w, h, c;
-        if (tex->mHeight == 0) {
-            unsigned char* px = stbi_load_from_memory((const stbi_uc*)tex->pcData, (int)tex->mWidth, &w, &h, &c, 4);
-            if (!px) continue;
-            out.px.assign(px, px + (size_t)w * h * 4);
-            stbi_image_free(px);
-        } else {
-            w = (int)tex->mWidth;
-            h = (int)tex->mHeight;
-            out.px.resize((size_t)w * h * 4);
-            for (int i = 0; i < w * h; ++i) {
-                out.px[i * 4 + 0] = tex->pcData[i].r;
-                out.px[i * 4 + 1] = tex->pcData[i].g;
-                out.px[i * 4 + 2] = tex->pcData[i].b;
-                out.px[i * 4 + 3] = tex->pcData[i].a;
+        if (g_decoded) {
+            auto it = g_decoded->find(tex);
+            if (it != g_decoded->end()) {
+                out = it->second;
+                return true;
             }
         }
-        out.w = w;
-        out.h = h;
-        out.name = path.C_Str();
-        downscale(out, maxSize);
-        return true;
+        if (decodeTexture(tex, path.C_Str(), maxSize, out)) return true;
     }
     return false;
 }
@@ -434,12 +489,91 @@ CharacterModel::Material loadMaterial(const aiScene* sc, const aiMaterial* mat, 
     // sem textura de metal/rugosidade valem só os fatores do material
     if (!m.texMR) m.texMR = makeSolidTexture(255, 255, 255, 255, false);
     if (!m.texNormal) m.texNormal = makeSolidTexture(128, 128, 255, 255, false);
-    if (!m.texEmissive) m.texEmissive = makeSolidTexture(0, 0, 0, 255, true);
     aiColor3D em(0, 0, 0);
     if (mat->Get(AI_MATKEY_COLOR_EMISSIVE, em) == AI_SUCCESS) m.emissiveFactor = glm::vec3(em.r, em.g, em.b);
+    float emStrength = 1.0f; // KHR_materials_emissive_strength (lâmpadas)
+    if (mat->Get(AI_MATKEY_EMISSIVE_INTENSITY, emStrength) == AI_SUCCESS) m.emissiveFactor *= emStrength;
+    // brilho só por cor (lâmpada sem textura): textura branca para o fator valer
+    if (!m.texEmissive) {
+        bool glows = m.emissiveFactor.x + m.emissiveFactor.y + m.emissiveFactor.z > 0.0f;
+        m.texEmissive = glows ? makeSolidTexture(255, 255, 255, 255, true) : makeSolidTexture(0, 0, 0, 255, true);
+    }
     std::printf("[modelo] material %s: metal %.2f rugosidade %.2f\n", mat->GetName().C_Str(), m.metallicFactor,
                 m.roughnessFactor);
     return m;
+}
+
+// Ordena os triângulos por material ('matIds' na ordem das partes) e, com 'chunk' > 0, por bloco
+// de chunk x chunk metros no plano xz. Monta as partes, os blocos (com caixa) e o índice ordenado.
+std::vector<unsigned> organize(const std::vector<Vertex>& v, const std::vector<unsigned>& idx, const std::vector<int>& triMat,
+                               const std::vector<int>& matIds, float chunk, std::vector<CharacterModel::Part>& parts,
+                               std::vector<CharacterModel::Chunk>& chunks) {
+    const size_t nt = triMat.size();
+    std::vector<int> slot(nt, -1);
+    std::map<int, int> slotOf;
+    for (size_t i = 0; i < matIds.size(); ++i) slotOf[matIds[i]] = (int)i;
+    std::vector<long long> cell(nt, 0);
+    for (size_t t = 0; t < nt; ++t) {
+        slot[t] = slotOf.at(triMat[t]);
+        if (chunk > 0.0f) {
+            float cx = 0.0f, cz = 0.0f;
+            for (int e = 0; e < 3; ++e) { cx += v[idx[t * 3 + e]].pos[0]; cz += v[idx[t * 3 + e]].pos[2]; }
+            long long ix = (long long)std::floor(cx / 3.0f / chunk), iz = (long long)std::floor(cz / 3.0f / chunk);
+            cell[t] = (ix + (1 << 20)) * (1LL << 22) + (iz + (1 << 20));
+        }
+    }
+    std::vector<int> order(nt);
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        return slot[a] != slot[b] ? slot[a] < slot[b] : cell[a] < cell[b];
+    });
+    parts.assign(matIds.size(), CharacterModel::Part{0, 0, 0});
+    for (size_t i = 0; i < parts.size(); ++i) parts[i].material = (int)i;
+    chunks.clear();
+    std::vector<unsigned> out;
+    out.reserve(idx.size());
+    size_t k = 0;
+    for (size_t pi = 0; pi < parts.size(); ++pi) {
+        CharacterModel::Part& p = parts[pi];
+        p.first = (GLsizei)out.size();
+        p.chunk0 = (int)chunks.size();
+        while (k < nt && slot[order[k]] == (int)pi) {
+            long long c = cell[order[k]];
+            CharacterModel::Chunk ch{(GLsizei)out.size(), 0, glm::vec3(1e30f), glm::vec3(-1e30f)};
+            while (k < nt && slot[order[k]] == (int)pi && cell[order[k]] == c) {
+                for (int e = 0; e < 3; ++e) {
+                    unsigned vi = idx[order[k] * 3 + e];
+                    out.push_back(vi);
+                    glm::vec3 q(v[vi].pos[0], v[vi].pos[1], v[vi].pos[2]);
+                    ch.lo = glm::min(ch.lo, q);
+                    ch.hi = glm::max(ch.hi, q);
+                }
+                ch.count += 3;
+                ++k;
+            }
+            if (chunk > 0.0f) chunks.push_back(ch);
+        }
+        p.count = (GLsizei)out.size() - p.first;
+        p.chunk1 = (int)chunks.size();
+    }
+    return out;
+}
+
+// Caixa (espaço do modelo) toda fora do frustum de 'mvp'? (os 8 cantos do mesmo lado de um plano)
+bool outsideFrustum(const glm::mat4& mvp, const glm::vec3& lo, const glm::vec3& hi) {
+    int out[6] = {0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 8; ++i) {
+        glm::vec4 c = mvp * glm::vec4((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z, 1.0f);
+        out[0] += c.x < -c.w;
+        out[1] += c.x > c.w;
+        out[2] += c.y < -c.w;
+        out[3] += c.y > c.w;
+        out[4] += c.z < -c.w;
+        out[5] += c.z > c.w;
+    }
+    for (int o : out)
+        if (o == 8) return true;
+    return false;
 }
 
 } // namespace
@@ -534,29 +668,24 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
         }
     }
 
-    // agrupa os triângulos por material: uma parte desenhada por material
+    // agrupa os triângulos por material (uma parte por material) e, se pedido, em blocos do mapa
     {
-        std::vector<int> order(triMat.size());
-        std::iota(order.begin(), order.end(), 0);
-        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return triMat[a] < triMat[b]; });
-        std::vector<unsigned> sorted;
-        sorted.reserve(idx.size());
-        std::vector<int> matIds;
-        for (int t : order) {
-            if (parts.empty() || matIds.back() != triMat[t]) {
-                parts.push_back({(GLsizei)sorted.size(), 0, (int)matIds.size()});
-                matIds.push_back(triMat[t]);
-            }
-            for (int e = 0; e < 3; ++e) sorted.push_back(idx[t * 3 + e]);
-            parts.back().count += 3;
-        }
-        idx.swap(sorted);
+        std::vector<int> matIds(triMat.begin(), triMat.end());
+        std::sort(matIds.begin(), matIds.end());
+        matIds.erase(std::unique(matIds.begin(), matIds.end()), matIds.end());
+        chunkSize_ = opt.chunkSize;
+        idx = organize(verts, idx, triMat, matIds, chunkSize_, parts, chunks);
+        if (!chunks.empty()) std::printf("[modelo] %zu blocos de %.0f m\n", chunks.size(), chunkSize_);
         matIds_ = matIds;
+        std::map<const aiTexture*, Image> decoded;
+        predecode(sc, matIds, opt.maxTextureSize, decoded);
+        g_decoded = &decoded;
         for (int id : matIds) {
             materials.push_back(loadMaterial(sc, sc->mMaterials[id], opt.maxTextureSize));
             hasAlphaCut |= materials.back().alphaCut;
             materialNames.push_back(sc->mMaterials[id]->GetName().C_Str());
         }
+        g_decoded = nullptr;
     }
 
     glGenVertexArrays(1, &vao_);
@@ -605,18 +734,7 @@ bool CharacterModel::recut(const std::vector<std::pair<glm::vec3, glm::vec3>>& c
         v.weights[1] = v.weights[2] = v.weights[3] = 0.0f;
     }
     // mesma divisão por material do load (os materiais já carregados continuam valendo)
-    std::vector<unsigned> sorted;
-    sorted.reserve(idx.size());
-    for (Part& p : parts) {
-        p.first = (GLsizei)sorted.size();
-        p.count = 0;
-        const int id = matIds_[p.material];
-        for (size_t t = 0; t < triMat.size(); ++t)
-            if (triMat[t] == id) {
-                for (int e = 0; e < 3; ++e) sorted.push_back(idx[t * 3 + e]);
-                p.count += 3;
-            }
-    }
+    std::vector<unsigned> sorted = organize(verts, idx, triMat, matIds_, chunkSize_, parts, chunks);
     glBindVertexArray(vao_);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
@@ -627,14 +745,35 @@ bool CharacterModel::recut(const std::vector<std::pair<glm::vec3, glm::vec3>>& c
     return true;
 }
 
-void CharacterModel::draw() const {
+void CharacterModel::draw(const glm::mat4* mvp) const {
+    if (mvp && !chunks.empty()) {
+        for (size_t i = 0; i < parts.size(); ++i) drawPart(i, mvp);
+        return;
+    }
     glBindVertexArray(vao_);
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
 }
 
-void CharacterModel::drawPart(size_t i) const {
+void CharacterModel::drawPart(size_t i, const glm::mat4* mvp) const {
     glBindVertexArray(vao_);
-    glDrawElements(GL_TRIANGLES, parts[i].count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned) * parts[i].first));
+    const Part& p = parts[i];
+    if (!mvp || chunks.empty()) {
+        glDrawElements(GL_TRIANGLES, p.count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned) * p.first));
+        return;
+    }
+    // blocos visíveis vizinhos no índice viram um desenho só
+    GLsizei start = 0, count = 0;
+    for (int c = p.chunk0; c < p.chunk1; ++c) {
+        const Chunk& ch = chunks[c];
+        if (outsideFrustum(*mvp, ch.lo, ch.hi)) continue;
+        if (count && start + count == ch.first) count += ch.count;
+        else {
+            if (count) glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned) * start));
+            start = ch.first;
+            count = ch.count;
+        }
+    }
+    if (count) glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, (void*)(sizeof(unsigned) * start));
 }
 
 void CharacterModel::reset() {
@@ -650,6 +789,7 @@ void CharacterModel::reset() {
     materials.clear();
     materialNames.clear();
     parts.clear();
+    chunks.clear();
     srcVerts_.clear();
     srcIdx_.clear();
     srcMat_.clear();

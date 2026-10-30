@@ -32,12 +32,16 @@ public:
         std::vector<std::pair<glm::vec3, glm::vec3>> clear;
         // Guarda a malha antes dos recortes, para recortar de novo sem ler o arquivo (recut).
         bool keepSource = false;
+        // > 0: divide a malha em blocos de chunkSize metros (xz) para desenhar só o que aparece
+        // (mapas grandes). Cada bloco tem sua caixa.
+        float chunkSize = 0.0f;
     };
     // sk == nullptr: objeto rígido (ex.: a arma), desenhado com uBones[0] = identidade,
     // ou modelo com rig próprio (opt.boneMap).
     bool load(const std::string& path, const Skeleton* sk, const LoadOptions& opt);
-    void draw() const;
-    void drawPart(size_t i) const;
+    // mvp != nullptr: só os blocos dentro desse frustum (modelo dividido com chunkSize).
+    void draw(const glm::mat4* mvp = nullptr) const;
+    void drawPart(size_t i, const glm::mat4* mvp = nullptr) const;
     // Solta a malha e as texturas (para carregar de novo, ex.: recortar a porta em outro lugar).
     void reset();
     // Troca a textura de cor de um material por uma imagem (PNG/JPG). false se não abriu.
@@ -53,13 +57,19 @@ public:
         bool useOcclusion = false;
         bool alphaCut = false; // recorte por alpha (folhas): pixels com alpha < 0,5 somem
     };
-    // Um trecho do índice por material.
+    // Um trecho do índice por material (com chunkSize: subdividido em blocos chunk0..chunk1).
     struct Part {
         GLsizei first, count;
         int material;
+        int chunk0 = 0, chunk1 = 0;
+    };
+    struct Chunk {
+        GLsizei first, count;
+        glm::vec3 lo, hi; // caixa no espaço do modelo
     };
     std::vector<Material> materials;
     std::vector<Part> parts;
+    std::vector<Chunk> chunks;
     bool hasAlphaCut = false; // algum material com recorte (os passos de sombra/profundidade usam a textura)
 
     // Refaz os vãos (opt.cuts) a partir da malha guardada no load (keepSource), sem ler o arquivo.
@@ -74,4 +84,5 @@ private:
     std::vector<unsigned> srcIdx_;
     std::vector<int> srcMat_;   // material (do arquivo) de cada triângulo
     std::vector<int> matIds_;   // material do arquivo de cada entrada de 'materials'
+    float chunkSize_ = 0.0f;
 };

@@ -5,6 +5,7 @@
 #include "renderer.h"
 #include "table.h"
 
+#include <cmath>
 #include <map>
 #include <memory>
 #include <string>
@@ -33,6 +34,7 @@ struct PropPlace {
     glm::vec3 pos{0.0f};
     float yaw = 0.0f; // rad
     float scale = 1.0f;
+    glm::vec3 stretch{1.0f}; // largura, altura, profundidade (por cima da escala)
     std::map<int, std::string> textures; // material -> imagem (caminho relativo à raiz do projeto)
     std::string asset; // objeto posto pelo editor: modelo (relativo à raiz); vazio = objeto fixo do cenário
     glm::mat4 matrix(const glm::mat4& pivot = glm::mat4(1.0f)) const;
@@ -41,7 +43,27 @@ struct PropPlace {
 struct DoorPlace {
     glm::vec3 hinge{0.0f};
     float width = 0.9f, height = 2.1f;
-    bool alongX = true; // folha ao longo de +X (parede leste-oeste); false = ao longo de +Z
+    float yaw = 0.0f;    // rad, qualquer ângulo: 0 = folha ao longo de +X, -90° = ao longo de +Z
+    bool mirror = false; // dobradiça no fim do vão (segunda folha de uma porta dupla)
+    bool glass = false;  // porta de vidro (moldura de alumínio)
+    glm::vec3 axis() const { return {std::cos(yaw), 0.0f, -std::sin(yaw)}; }
+    glm::vec3 end() const { return hinge + axis() * width; }
+    // Ao longo de X ou Z: o vão pode ser recortado na parede da malha.
+    bool axisAligned() const { return std::fabs(std::sin(2.0f * yaw)) < 0.03f; }
+};
+
+// Luz posta pelo editor. Pontual (para todo lado), spot (cone) ou ambiente (clareia por igual
+// tudo dentro do raio, sem direção: bom para salas escuras).
+struct LightPlace {
+    enum Type { Point = 0, Spot = 1, Ambient = 2 };
+    int type = Point;
+    glm::vec3 pos{0.0f};
+    float yaw = 0.0f, pitch = -1.5707963f; // direção do spot (rad); -90° = para baixo
+    glm::vec3 color{1.0f, 0.86f, 0.68f};
+    float intensity = 6.0f; // brilho
+    float range = 8.0f;     // alcance (m)
+    float inner = 25.0f, outer = 40.0f; // spot: cone (graus, metade da abertura)
+    glm::vec3 dir() const { return {std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw)}; }
 };
 
 struct LevelLayout {
@@ -52,6 +74,7 @@ struct LevelLayout {
     float doorWidth = 0.85f, doorHeight = 2.08f;
     std::vector<DoorPlace> extraDoors;                        // outras portas (só no arquivo/painel)
     std::vector<DoorPlace> allDoors() const;                  // a principal (se houver) + as outras
+    std::vector<LightPlace> lights;                           // luzes postas pelo editor
     std::vector<glm::vec3> spawns;                            // inimigos
     std::vector<float> spawnYaw;
     std::map<int, std::pair<glm::vec3, float>> guns;          // arma i posta no chão pelo editor (posição, giro)
@@ -131,10 +154,10 @@ void defaultOfficialLayout(LevelLayout& L);
 // Cenário de teste: mapa de blocos, arena, mesas (props "mesa1"/"mesa2").
 Arena buildTestScene(World& w, LevelLayout& L, std::vector<Table>& tables);
 
-// Cenário oficial (Untitled.fbx, blocado no Blender): o personagem começa no corredor e as portas
+// Cenário oficial (Novomapa.glb, montado no Blender): o personagem começa no corredor e as portas
 // levam às salas; os inimigos ficam na sala do fundo.
 struct OfficialLevel {
-    CharacterModel map; // Untitled.fbx
+    CharacterModel map; // Novomapa.glb
     std::vector<glm::vec3> mapTris;
     bool loaded = false;
 
