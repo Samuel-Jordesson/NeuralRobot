@@ -9,6 +9,7 @@ out vec4 FragColor;
 uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta), 6 = vidro
 uniform vec3 uColor;
 uniform vec3 uBoxMin, uBoxMax; // limites do bloco (desgaste nas quinas)
+uniform sampler2D uPanelTex;   // material 7: imagem na peça (folha de porta)
 
 // Linhas anti-serrilhadas com largura em metros; somem com a distância (evita moiré).
 float grid(vec2 p, float spacing, float lineW) {
@@ -42,6 +43,14 @@ void main() {
         albedo = uColor;
         rough = 0.3;
         metal = 1.0;
+    } else if (uMaterial == 7) {
+        // imagem esticada na face maior da peça (frente e verso da folha); bordas usam a faixa da beira
+        vec3 a = abs(vLocal);
+        vec2 uv = a.z >= max(a.x, a.y) ? vec2(vLocal.z > 0.0 ? vLocal.x : -vLocal.x, vLocal.y)
+                                        : (a.x >= a.y ? vec2(vLocal.z, vLocal.y) : vec2(vLocal.x, vLocal.z));
+        uv = vec2(uv.x + 0.5, 0.5 - uv.y);
+        albedo = texture(uPanelTex, uv).rgb * uColor;
+        rough = 0.62;
     } else if (uMaterial == 6) {
         // vidro: quase só reflexo; transparência pelo ângulo (Fresnel), passo transparente
         if (!gl_FrontFacing) N = -N;

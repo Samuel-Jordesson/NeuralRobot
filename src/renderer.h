@@ -6,6 +6,8 @@
 #include "skeleton.h"
 #include "weapon.h"
 
+#include <map>
+#include <string>
 #include <vector>
 
 struct RenderScene {
@@ -45,7 +47,8 @@ struct RenderScene {
     struct Panel {
         glm::mat4 model;
         glm::vec3 color;
-        int material; // 3 = metal liso, 4 = madeira
+        int material; // 3 = metal liso, 4 = madeira, 6 = vidro, 7 = imagem (image)
+        std::string image; // material 7: caminho completo da imagem
     };
     std::vector<Panel> panels; // material 6 = vidro (desenhado transparente depois da cena)
 
@@ -56,6 +59,16 @@ struct RenderScene {
         float range = 8.0f, cosInner = 0.9f, cosOuter = 0.75f;
     };
     std::vector<Light> lights;
+
+    // pintura nos modelos (editor): carimbos que escurecem/tingem a superfície
+    struct Stain {
+        glm::vec3 pos, normal;
+        float size, angle, strength, soft;
+        std::string image; // caminho completo da imagem; vazio = sujeira automática
+    };
+    std::vector<Stain> stains;
+    // ondas na água das poças: (x, z, quando começou em 'time', força)
+    std::vector<glm::vec4> ripples;
 
     // HUD
     float crosshairAlpha = 0.0f;
@@ -102,6 +115,12 @@ private:
     GraphicsSettings gs_;
     glm::mat4 cullVP_{1.0f}; // visão do passo atual (corta os blocos do mapa fora dela)
     void drawGlass(const RenderScene& s);
+    void drawStains(const RenderScene& s);
+    void drawGrass(const RenderScene& s);
+    Shader grass_, glass_;
+    GLuint stainTexture(const std::string& path); // carrega uma vez (0 se não abriu)
+    std::map<std::string, GLuint> stainTex_;
+    Shader stain_;
     void updateRoof(const World& w);
     GLuint roofTex_ = 0;   // mapa de teto (lado de dentro): R altura, G cobertura suavizada
     int roofVersion_ = -1;

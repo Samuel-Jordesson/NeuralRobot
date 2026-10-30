@@ -481,7 +481,8 @@ int main(int argc, char** argv) {
             }
             if (L.paintOn) {
                 paint.create(L.paintOrigin, L.paintSize, L.paintRes);
-                for (const LevelLayout::PaintLayer& pl : L.paintLayers) paint.layers.push_back({pl.albedo, pl.normal, pl.tile});
+                for (const LevelLayout::PaintLayer& pl : L.paintLayers)
+                    paint.layers.push_back({pl.albedo, pl.normal, pl.rough, pl.height, pl.ao, pl.normalDX, pl.tile, pl.kind, pl.grass, pl.depth});
                 paint.uploadLayers(root);
                 paint.loadWeights(root + "/" + scenePaintFile(id));
             }
@@ -587,9 +588,14 @@ int main(int argc, char** argv) {
             l.color = li.color * li.intensity;
             l.range = std::max(0.1f, li.range);
             l.cosInner = std::cos(glm::radians(std::min(li.inner, li.outer)));
-            l.cosOuter = std::cos(glm::radians(li.outer));
+            l.cosOuter = li.type == LightPlace::Area ? std::max(0.05f, li.size) : std::cos(glm::radians(li.outer)); // área: tamanho
             scene.lights.push_back(l);
         }
+        // pintura nos modelos (sujeira, manchas) do mesmo cenário
+        scene.stains.clear();
+        for (const StainPlace& st : layouts[sceneId].stains)
+            scene.stains.push_back({st.pos, st.normal, st.size, st.angle, st.strength, st.soft,
+                                    st.tex.empty() ? std::string() : root + "/" + st.tex});
     };
     auto sceneGuns = [&](const std::vector<glm::mat4>& mats) {
         scene.guns.clear();
@@ -765,6 +771,8 @@ int main(int argc, char** argv) {
         arena.door.addPanels(scene.panels);
         for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
         sceneLights();
+        for (RenderScene::Panel& pn : scene.panels) // imagem da folha da porta: caminho a partir da raiz
+            if (!pn.image.empty() && pn.image[0] != '/') pn.image = root + "/" + pn.image;
         scene.view = cam.view;
         scene.proj = glm::perspective(fovy, (float)fbw / fbh, 0.05f, 1000.0f);
         scene.camPos = cam.pos;
@@ -774,6 +782,17 @@ int main(int argc, char** argv) {
         scene.promptAlpha = pick >= 0 ? 1.0f : 0.0f;
         if (pick >= 0) scene.promptWorld = promptFor(pick);
         scene.time = 30.0f;
+        if (const char* rp = std::getenv("GA_RIPPLES")) { // depuração: "x z idade força;..." ondas na foto
+            std::string all = rp;
+            for (size_t a = 0; a < all.size();) {
+                size_t b = all.find(';', a);
+                float x, z, age, st;
+                if (std::sscanf(all.substr(a, b - a).c_str(), "%f %f %f %f", &x, &z, &age, &st) == 4)
+                    scene.ripples.push_back(glm::vec4(x, z, scene.time - age, st));
+                if (b == std::string::npos) break;
+                a = b + 1;
+            }
+        }
         if (args.menu) menu::init(win, false);
         const int frames = std::max(1, args.bench);
         glFinish();
@@ -827,6 +846,8 @@ int main(int argc, char** argv) {
     float gameTime = 0.0f, fpsShown = 0.0f, msShown = 0.0f;
     float hipFireTimer = 0.0f; // atirar sem segurar o botão direito levanta a arma por um instante
     float promptAlpha = 0.0f;
+    std::vector<glm::vec4> ripples; // ondas na água (x, z, início, força)
+    bool footDown[2] = {true, true};
     glm::vec3 promptPos(0.0f);
     std::vector<glm::mat4> gunMats, lastGuns;
     fillGuns(glm::mat4(1.0f), lastGuns);
@@ -995,6 +1016,14 @@ int main(int argc, char** argv) {
         for (const PropPlace& p : L.props)
             c.propMeshes.push_back(!p.asset.empty() ? assets.mesh(p.asset)
                                    : sceneId == SceneTest ? &tableMesh : official.mesh(p.name));
+        for (const PropPlace& p : L.props) { // triângulos de cada objeto (o pincel acerta a superfície exata)
+            const std::vector<glm::vec3>* t = nullptr;
+            if (!p.asset.empty()) {
+                if (AssetLibrary::Entry* e = assets.get(p.asset)) t = &e->tris;
+            } else if (sceneId == SceneOfficial && p.name == "mapa")
+                t = &official.mapTris;
+            c.propTris.push_back(t);
+        }
         c.assets = &assets;
         c.terrain = &terrain;
         c.paint = &paint;
@@ -1599,6 +1628,34 @@ int main(int argc, char** argv) {
             computeGlobals(skeleton, pose, globals);
             computeSkinMatrices(skeleton, globals, skin);
         }
+        // água: cada pé que encosta numa poça e cada tiro que bate nela fazem uma onda
+        {
+            auto waterAt = [&](const glm::vec3& p) {
+                if (!paint.active) return 0.0f;
+                float w = 0.0f;
+                for (int k = 0; k < (int)paint.layers.size() && k < 4; ++k)
+                    if (paint.layers[k].kind == 1) w = std::max(w, paint.weightAt(glm::vec2(p.x, p.z), k));
+                return w;
+            };
+            auto addRipple = [&](const glm::vec3& p, float strength) {
+                if (waterAt(p) < 0.3f) return;
+                ripples.push_back(glm::vec4(p.x, p.z, gameTime, strength));
+                if (ripples.size() > 16) ripples.erase(ripples.begin());
+            };
+            for (int f = 0; f < 2; ++f) {
+                glm::vec3 foot = glm::vec3(charModel * globals[f == 0 ? FOOT_L : FOOT_R][3]);
+                const float h = foot.y - visualY; // tornozelo: ~11 cm com o pé apoiado
+                if (!footDown[f] && h < 0.14f && body.grounded) { addRipple(foot, 0.8f); footDown[f] = true; } // pisou
+                else if (footDown[f] && h > 0.17f) footDown[f] = false; // levantou: o próximo passo faz outra onda
+            }
+            for (Weapon* wp : {&weapon, &enemyFx}) {
+                for (const glm::vec3& p : wp->impacts) addRipple(p, 1.6f);
+                wp->impacts.clear();
+            }
+            ripples.erase(std::remove_if(ripples.begin(), ripples.end(), [&](const glm::vec4& r) { return gameTime - r.z > 2.6f; }),
+                          ripples.end());
+            scene.ripples = ripples;
+        }
         fillGuns(charModel, gunMats);
         if (transferT < 1.0f) {
             transferT = std::min(1.0f, transferT + dt / 0.12f);
@@ -1722,6 +1779,8 @@ int main(int argc, char** argv) {
             arena.door.addPanels(scene.panels);
             for (const Door& d : arena.extraDoors) d.addPanels(scene.panels);
             sceneLights();
+            for (RenderScene::Panel& pn : scene.panels) // imagem da folha da porta: caminho a partir da raiz
+                if (!pn.image.empty() && pn.image[0] != '/') pn.image = root + "/" + pn.image;
             scene.view = cam.view;
             scene.proj = glm::perspective(cam.fov(), (float)fbw / fbh, 0.05f, 1000.0f);
             scene.camPos = cam.pos;
@@ -1884,6 +1943,19 @@ int main(int argc, char** argv) {
             int at = 0;
             char path[512] = {};
             if (std::sscanf(grab, "%d %511s", &at, path) == 2 && ++frameNo == at) {
+                std::vector<unsigned char> px((size_t)fbw * fbh * 4);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glReadPixels(0, 0, fbw, fbh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                stbi_flip_vertically_on_write(1);
+                stbi_write_png(path, fbw, fbh, 4, px.data(), fbw * 4);
+                glfwSetWindowShouldClose(win, 1);
+            }
+        }
+        if (const char* es = std::getenv("GA_EDSHOT")) { // depuração: foto da janela no quadro N (com GA_CLICK/GA_DRAG testa o editor)
+            static int fr = 0;
+            int at = 0;
+            char path[512] = {};
+            if (std::sscanf(es, "%d %511s", &at, path) == 2 && ++fr == at) {
                 std::vector<unsigned char> px((size_t)fbw * fbh * 4);
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glReadPixels(0, 0, fbw, fbh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());

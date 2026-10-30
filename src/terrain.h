@@ -23,6 +23,7 @@ struct Terrain {
     void brush(const glm::vec2& c, float radius, float strength, float softness, int mode, float level, float dt);
 
     void upload(); // refaz a malha na GPU (depois de mexer em h)
+    GLuint heightTex = 0; // alturas numa textura (R32F n x n): a grama 3D nasce na altura certa
     void draw() const;
     void release();
     bool save(const std::string& path) const;
@@ -33,14 +34,20 @@ private:
     GLsizei count_ = 0;
 };
 
-// Pintura do chão: até 4 camadas de textura (cor + normal map, repetidas a cada 'tile' m) misturadas
-// por um mapa de pesos em (x, z). Vale para toda superfície virada para cima dentro da área.
+// Pintura do chão: até 4 camadas de material (cor, normal, rugosidade, relevo e oclusão, repetidas a
+// cada 'tile' m) misturadas por um mapa de pesos em (x, z) e pela altura de cada material (a grama
+// entra pelas frestas da terra em vez de um degradê). Vale para toda superfície virada para cima.
 struct GroundPaint {
     static constexpr int kMaxLayers = 4;
-    static constexpr int kLayerRes = 1024; // texturas das camadas são reamostradas para isso
+    static constexpr int kLayerRes = 2048; // texturas das camadas são reamostradas para isso
     struct Layer {
-        std::string albedo, normal; // caminhos relativos à raiz ("" = sem normal map)
+        // caminhos relativos à raiz ("" = não tem esse mapa)
+        std::string albedo, normal, rough, height, ao;
+        bool normalDX = false; // normal no padrão DirectX (verde invertido)
         float tile = 2.0f;
+        int kind = 0;          // 0 material, 1 poça d'água (sem imagens: molha e alaga o que está embaixo)
+        bool grass = false;    // folhas de grama 3D de verdade onde essa camada está pintada
+        float depth = 0.0f;    // quanto o terreno afunda onde ela é pintada (m)
     };
     bool active = false;
     glm::vec2 origin{0.0f};
@@ -52,6 +59,7 @@ struct GroundPaint {
     void create(const glm::vec2& origin, float size, int res);
     // Pincel: aumenta a camada 'layer' (ou apaga tudo com erase) em volta de c.
     void brush(const glm::vec2& c, float radius, float strength, float softness, int layer, bool erase, float dt);
+    float weightAt(const glm::vec2& p, int layer) const; // 0..1 (mais perto do texel)
     // Carrega as imagens das camadas na GPU (depois de mudar layers).
     void uploadLayers(const std::string& root);
     void uploadWeights();
@@ -60,4 +68,5 @@ struct GroundPaint {
     bool loadWeights(const std::string& path);
 
     GLuint weightTex = 0, albedoArr = 0, normalArr = 0;
+    GLuint maskArr = 0; // R rugosidade, G oclusão, B altura (relevo)
 };

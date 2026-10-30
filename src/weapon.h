@@ -47,6 +47,7 @@ public:
     float flashAngle = 0.0f;
 
     std::vector<Decal> decals;
+    std::vector<glm::vec3> impacts; // onde os tiros bateram neste quadro (quem usa limpa: ex. ondas na poça)
     std::vector<Particle> particles;
     std::vector<Tracer> tracers;
     std::vector<Shell> shells;

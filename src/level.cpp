@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -186,27 +187,38 @@ std::string LevelLayout::serialize() const {
     for (auto& [i, b] : boxes)
         o << "box " << i << " " << b.first.x << " " << b.first.y << " " << b.first.z << " " << b.second.x << " "
           << b.second.y << " " << b.second.z << "\n";
+    if (!hasDoor) o << "nodoor\n";
+    if (spawns.empty()) o << "nospawns\n";
     if (hasDoor)
         o << "door " << doorHinge.x << " " << doorHinge.y << " " << doorHinge.z << " " << doorWidth << " " << doorHeight << "\n";
     // portas extras: dobradiça, largura, altura, ângulo (graus), tipo (m = espelhada, v = vidro)
     for (const DoorPlace& d : extraDoors) {
         std::string flags = std::string(d.mirror ? "m" : "") + (d.glass ? "v" : "");
         o << "door3 " << d.hinge.x << " " << d.hinge.y << " " << d.hinge.z << " " << d.width << " " << d.height << " "
-          << glm::degrees(d.yaw) << " " << (flags.empty() ? "-" : flags) << "\n";
+          << glm::degrees(d.yaw) << " " << (flags.empty() ? "-" : flags) << " " << d.glassColor.r << " " << d.glassColor.g << " "
+          << d.glassColor.b << " " << (d.texture.empty() ? "-" : d.texture) << "\n";
     }
     if (extraDoors.empty()) o << "nodoors\n"; // tirou todas: o arquivo não volta para as de fábrica
     // luzes: tipo x y z giro inclinação r g b brilho alcance cone-interno cone-externo
     for (const LightPlace& li : lights)
         o << "light " << li.type << " " << li.pos.x << " " << li.pos.y << " " << li.pos.z << " " << glm::degrees(li.yaw) << " "
           << glm::degrees(li.pitch) << " " << li.color.r << " " << li.color.g << " " << li.color.b << " " << li.intensity
-          << " " << li.range << " " << li.inner << " " << li.outer << "\n";
+          << " " << li.range << " " << li.inner << " " << li.outer << " " << li.size << "\n";
+    // pintura nos modelos: posição, normal, raio, giro, força, suavidade, imagem (- = sujeira automática)
+    for (const StainPlace& st : stains)
+        o << "stain " << st.pos.x << " " << st.pos.y << " " << st.pos.z << " " << st.normal.x << " " << st.normal.y << " "
+          << st.normal.z << " " << st.size << " " << st.angle << " " << st.strength << " " << st.soft << " "
+          << (st.tex.empty() ? "-" : st.tex) << "\n";
     for (auto& [i, g] : guns)
         o << "gun " << i << " " << g.first.x << " " << g.first.y << " " << g.first.z << " " << glm::degrees(g.second) << "\n";
     for (size_t i = 0; i < spawns.size(); ++i)
         o << "spawn " << spawns[i].x << " " << spawns[i].y << " " << spawns[i].z << " " << glm::degrees(spawnYaw[i]) << "\n";
     if (paintOn) {
         o << "paint " << paintOrigin.x << " " << paintOrigin.y << " " << paintSize << " " << paintRes << "\n";
-        for (const PaintLayer& l : paintLayers) o << "layer " << l.tile << " " << l.albedo << "|" << l.normal << "\n";
+        for (const PaintLayer& l : paintLayers)
+            o << "layer " << l.tile << " " << l.albedo << "|" << l.normal << "|" << l.rough << "|" << l.height << "|" << l.ao << "|"
+              << (l.normalDX ? "dx" : "") << "|" << (l.kind == 1 ? "agua" : "") << "|" << (l.grass ? "grama" : "") << "|"
+              << l.depth << "\n";
     }
     if (terrainOn)
         o << "terrain " << terrainOrigin.x << " " << terrainOrigin.y << " " << terrainSize << " " << terrainN << "\n";
@@ -217,7 +229,7 @@ std::string LevelLayout::serialize() const {
 bool LevelLayout::parse(const std::string& text) {
     std::istringstream in(text);
     std::string line;
-    bool any = false, spawnSeen = false, door2Seen = false, lightSeen = false;
+    bool any = false, spawnSeen = false, door2Seen = false, lightSeen = false, stainSeen = false;
     while (std::getline(in, line)) {
         std::istringstream l(line);
         std::string k;
@@ -262,18 +274,40 @@ bool LevelLayout::parse(const std::string& text) {
             d.yaw = glm::radians(yawDeg);
             d.mirror = flags.find('m') != std::string::npos;
             d.glass = flags.find('v') != std::string::npos;
+            glm::vec3 gc;
+            if (l >> gc.r >> gc.g >> gc.b) { // cor do vidro e textura (arquivos novos)
+                d.glassColor = gc;
+                std::getline(l >> std::ws, d.texture);
+                if (d.texture == "-") d.texture.clear();
+            }
             extraDoors.push_back(d);
         } else if (k == "stretch") {
             std::string name;
             glm::vec3 s3(1.0f);
             l >> name >> s3.x >> s3.y >> s3.z;
             if (PropPlace* e = prop(name)) e->stretch = s3;
+        } else if (k == "nodoor") { // cenário sem a porta principal
+            hasDoor = false;
+        } else if (k == "nospawns") { // cenário sem inimigos
+            spawns.clear();
+            spawnYaw.clear();
+            spawnSeen = true;
+        } else if (k == "stain") {
+            if (!stainSeen) { stains.clear(); stainSeen = true; }
+            StainPlace st;
+            l >> st.pos.x >> st.pos.y >> st.pos.z >> st.normal.x >> st.normal.y >> st.normal.z >> st.size >> st.angle >>
+                st.strength >> st.soft;
+            std::getline(l >> std::ws, st.tex);
+            if (st.tex == "-") st.tex.clear();
+            stains.push_back(st);
         } else if (k == "light") {
             if (!lightSeen) { lights.clear(); lightSeen = true; }
             LightPlace li;
             float y = 0.0f, pi = -90.0f;
             l >> li.type >> li.pos.x >> li.pos.y >> li.pos.z >> y >> pi >> li.color.r >> li.color.g >> li.color.b >> li.intensity
                 >> li.range >> li.inner >> li.outer;
+            float sz;
+            if (l >> sz) li.size = sz;
             li.yaw = glm::radians(y);
             li.pitch = glm::radians(pi);
             lights.push_back(li);
@@ -299,9 +333,25 @@ bool LevelLayout::parse(const std::string& text) {
             std::string rest;
             l >> pl.tile;
             std::getline(l >> std::ws, rest);
-            size_t bar = rest.find('|');
-            pl.albedo = rest.substr(0, bar);
-            if (bar != std::string::npos) pl.normal = rest.substr(bar + 1);
+            // cor|normal|rugosidade|relevo|oclusão|dx (os arquivos antigos têm só cor|normal)
+            std::vector<std::string> f;
+            size_t a = 0;
+            for (;;) {
+                size_t bar = rest.find('|', a);
+                f.push_back(rest.substr(a, bar == std::string::npos ? std::string::npos : bar - a));
+                if (bar == std::string::npos) break;
+                a = bar + 1;
+            }
+            f.resize(9);
+            pl.albedo = f[0];
+            pl.normal = f[1];
+            pl.rough = f[2];
+            pl.height = f[3];
+            pl.ao = f[4];
+            pl.normalDX = f[5] == "dx";
+            pl.kind = f[6] == "agua" ? 1 : 0;
+            pl.grass = f[7] == "grama";
+            pl.depth = f[8].empty() ? 0.0f : (float)std::atof(f[8].c_str());
             paintLayers.push_back(pl);
         } else if (k == "terrain") {
             terrainOn = true;
@@ -365,6 +415,7 @@ Arena buildTestScene(World& w, LevelLayout& L, std::vector<Table>& tables) {
     // mesas: giro em quartos de volta (a colisão delas é de caixas alinhadas)
     tables.clear();
     for (const PropPlace& p : L.props) {
+        if (!p.asset.empty()) continue; // objeto posto pelo editor (desenhado pela AssetLibrary), não é mesa
         Table t;
         t.pos = p.pos;
         t.quarterTurns = (int)std::lround(p.yaw / 1.5707963f);
@@ -460,6 +511,14 @@ bool OfficialLevel::load(const std::string& root, const LevelLayout& L) {
         cuts_ = cuts;
         return true;
     }
+    if (!std::filesystem::exists(root + "/" + kMapFile)) { // sem o arquivo do mapa: cenário vazio (só chão)
+        if (!loaded) std::printf("[cenario] %s não existe: cenário oficial vazio\n", kMapFile);
+        map.reset();
+        mapTris.clear();
+        cuts_ = cuts;
+        loaded = true;
+        return true;
+    }
     CharacterModel::LoadOptions o;
     o.groundAtZero = false;
     o.maxTextureSize = 1024;
@@ -509,6 +568,7 @@ Arena OfficialLevel::build(World& w, std::vector<RenderScene::Prop>& props, cons
     a.door.width = L.doorWidth;
     a.door.height = L.doorHeight;
     a.door.thick = 0.05f;
+    a.door.enabled = L.hasDoor;
     w.boxes.push_back({glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), true, false}); // barra raios com a porta fechada
     a.door.collider = (int)w.boxes.size() - 1;
     addExtraDoors(w, a, L);
@@ -529,7 +589,13 @@ AssetLibrary::Entry* AssetLibrary::get(const std::string& rel) {
         o.groundAtZero = true; // apoiado no chão onde for posto
         o.maxTextureSize = 2048;
         o.triangles = &e->tris;
-        e->ok = e->model.load(root + "/" + rel, nullptr, o);
+        std::string file = rel;
+        if (size_t h = rel.rfind('#'); h != std::string::npos) { // "arquivo.glb#n": só a parte n, no lugar dela
+            file = rel.substr(0, h);
+            o.part = std::atoi(rel.c_str() + h + 1);
+            o.groundAtZero = false;
+        }
+        e->ok = e->model.load(root + "/" + file, nullptr, o);
         if (!e->ok) std::fprintf(stderr, "[asset] falha ao abrir %s\n", rel.c_str());
         it = cache_.emplace(rel, std::move(e)).first;
     }
@@ -623,6 +689,8 @@ void addExtraDoors(World& w, Arena& a, const LevelLayout& L) {
         e.thick = d.glass ? 0.04f : 0.05f;
         e.base = d.yaw;
         e.glass = d.glass;
+        e.glassColor = d.glassColor;
+        e.texture = d.texture;
         e.framed = true;
         bool post0 = !sharedEdge(d, d.hinge), post1 = !sharedEdge(d, d.end());
         if (d.mirror) { // dobradiça na outra ponta, folha virada para trás

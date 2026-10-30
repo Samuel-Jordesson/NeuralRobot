@@ -1,6 +1,8 @@
 #include "free_editor.h"
 #include "terrain.h"
 
+#include <stb_image.h>
+
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 
@@ -32,6 +34,11 @@ float rayBox(const glm::vec3& o, const glm::vec3& d, const glm::vec3& lo, const 
     if (t1 < 0.0f) return -1.0f;
     inside = t0 < 0.0f;
     return inside ? t1 : t0;
+}
+
+// Espaço da porta: origem na dobradiça, X ao longo da folha (qualquer ângulo).
+glm::mat4 doorFrame(const DoorPlace& d) {
+    return glm::translate(glm::mat4(1.0f), d.hinge) * glm::rotate(glm::mat4(1.0f), d.yaw, glm::vec3(0, 1, 0));
 }
 
 bool keyDown(GLFWwindow* w, int k) { return glfwGetKey(w, k) == GLFW_PRESS; }
@@ -70,11 +77,80 @@ void FreeEditor::scanImages() {
         }
     }
     std::sort(images_.begin(), images_.end());
+    scanTexSets();
+}
+
+void FreeEditor::scanTexSets() {
+    namespace fs = std::filesystem;
+    // sufixo do nome -> papel no material (o mais específico primeiro)
+    static const struct { const char* suf; int role; } kSuf[] = {
+        {"_normalgl", 1}, {"_normal_gl", 1}, {"_nor_gl", 1}, {"_normaldx", 2}, {"_normal_dx", 2}, {"_nor_dx", 2},
+        {"_normal", 1}, {"_nrm", 1}, {"_norm", 1}, {"_nor", 1}, {"_roughness", 3}, {"_rough", 3}, {"_rgh", 3},
+        {"_displacement", 4}, {"_height", 4}, {"_disp", 4}, {"_bump", 4}, {"_ambientocclusion", 5}, {"_occlusion", 5},
+        {"_ao", 5}, {"_opacity", 6}, {"_alpha", 6}, {"_metalness", 6}, {"_metallic", 6}, {"_basecolor", 0}, {"_base_color", 0}, {"_albedo", 0}, {"_diffuse", 0}, {"_color", 0}, {"_diff", 0},
+        {"_col", 0}};
+    std::map<std::string, TexSet> sets;
+    std::vector<std::string> order;
+    for (const std::string& img : images_) {
+        // materiais só da pasta textures/ (as outras imagens são texturas internas dos modelos)
+        if (img.rfind("textures/", 0) != 0 && img.rfind("textures\\", 0) != 0) continue;
+        fs::path p(img);
+        std::string stem = p.stem().string(), low = stem;
+        for (char& ch : low) ch = (char)std::tolower((unsigned char)ch);
+        int role = -1;
+        std::string base = stem;
+        for (const auto& s : kSuf) {
+            size_t n = std::strlen(s.suf);
+            if (low.size() > n && low.compare(low.size() - n, n, s.suf) == 0) { role = s.role; base = stem.substr(0, stem.size() - n); break; }
+        }
+        if (role < 0) role = 0; // imagem solta: vale como cor
+        std::string key = p.parent_path().generic_string() + "/" + base;
+        if (!sets.count(key)) order.push_back(key);
+        TexSet& t = sets[key];
+        t.name = base;
+        switch (role) {
+        case 0: if (t.color.empty()) t.color = img; break;
+        case 1: t.normal = img; t.dx = false; break;   // GL tem preferência
+        case 2: if (t.normal.empty()) { t.normal = img; t.dx = true; } break;
+        case 3: t.rough = img; break;
+        case 4: t.height = img; break;
+        case 5: t.ao = img; break;
+        }
+    }
+    texSets_.clear();
+    for (const std::string& k : order)
+        if (!sets[k].color.empty()) texSets_.push_back(sets[k]); // só conjuntos com cor
+}
+
+unsigned FreeEditor::thumb(const std::string& rel) {
+    auto it = thumbs_.find(rel);
+    if (it != thumbs_.end()) return it->second;
+    GLuint t = 0;
+    int w, h, ch;
+    if (unsigned char* px = stbi_load((root_ + "/" + rel).c_str(), &w, &h, &ch, 4)) {
+        const int s = 96; // miniatura: amostra por área
+        std::vector<unsigned char> out((size_t)s * s * 4);
+        for (int y = 0; y < s; ++y)
+            for (int x = 0; x < s; ++x) {
+                int x0 = x * w / s, x1 = std::max(x0 + 1, (x + 1) * w / s), y0 = y * h / s, y1 = std::max(y0 + 1, (y + 1) * h / s);
+                int stepX = std::max(1, (x1 - x0) / 4), stepY = std::max(1, (y1 - y0) / 4);
+                unsigned acc[4] = {0, 0, 0, 0}, n = 0;
+                for (int yy = y0; yy < y1; yy += stepY)
+                    for (int xx = x0; xx < x1; xx += stepX, ++n)
+                        for (int k = 0; k < 4; ++k) acc[k] += px[((size_t)yy * w + xx) * 4 + k];
+                for (int k = 0; k < 4; ++k) out[((size_t)y * s + x) * 4 + k] = (unsigned char)(acc[k] / std::max(1u, n));
+            }
+        stbi_image_free(px);
+        t = makeTexture2D(out.data(), s, s, false);
+    }
+    thumbs_[rel] = t;
+    return t;
 }
 
 FreeEditor::Ray FreeEditor::mouseRay(GLFWwindow* win, int, int) const {
     double mx, my;
     glfwGetCursorPos(win, &mx, &my);
+    if (fakeMouse_) { mx = fakeMx_; my = fakeMy_; }
     return rayAt((float)mx, (float)my);
 }
 
@@ -86,6 +162,7 @@ glm::vec3 FreeEditor::selPos(Context& c) const {
     case ExtraDoor: return c.layout.extraDoors[idx_].hinge;
     case Spawn: return c.layout.spawns[idx_];
     case Start: return c.layout.start;
+    case Light: return c.layout.lights[idx_].pos;
     case Gun: {
         auto g = c.layout.guns.find(idx_);
         return g != c.layout.guns.end() ? g->second.first : c.gunPos[idx_];
@@ -104,6 +181,11 @@ std::string FreeEditor::selName(const Context& c) const {
     case Spawn: std::snprintf(buf, sizeof(buf), "Inimigo %d", idx_ + 1); return buf;
     case Start: return "Início do personagem";
     case Gun: return idx_ < (int)c.gunNames.size() ? "Arma: " + c.gunNames[idx_] : "Arma";
+    case Light: {
+        const char* t[] = {"pontual", "spot", "ambiente", "sol", "área"};
+        std::snprintf(buf, sizeof(buf), "Luz %d (%s)", idx_ + 1, t[std::clamp(c.layout.lights[idx_].type, 0, 4)]);
+        return buf;
+    }
     default: return "";
     }
 }
@@ -138,10 +220,11 @@ void FreeEditor::pick(const Ray& r, Context& c) {
     }
     for (size_t i = 0; i < c.layout.extraDoors.size(); ++i) {
         const DoorPlace& d = c.layout.extraDoors[i];
-        glm::vec3 ext = d.alongX ? glm::vec3(d.width, d.height, 0.12f) : glm::vec3(0.12f, d.height, d.width);
-        glm::vec3 lo = d.alongX ? d.hinge - glm::vec3(0, 0, 0.12f) : d.hinge - glm::vec3(0.12f, 0, 0);
+        // raio no espaço da porta (que pode estar em qualquer ângulo)
+        glm::mat4 inv = glm::inverse(doorFrame(d));
+        glm::vec3 o = glm::vec3(inv * glm::vec4(r.o, 1.0f)), dd = glm::vec3(inv * glm::vec4(r.d, 0.0f));
         bool in = false;
-        consider(ExtraDoor, (int)i, rayBox(r.o, r.d, lo, lo + ext + (d.alongX ? glm::vec3(0, 0, 0.12f) : glm::vec3(0.12f, 0, 0)), in), in);
+        consider(ExtraDoor, (int)i, rayBox(o, dd, glm::vec3(0, 0, -0.12f), glm::vec3(d.width, d.height, 0.12f), in), in);
     }
     auto marker = [&](Kind k, int i, const glm::vec3& p) {
         bool in = false;
@@ -154,6 +237,11 @@ void FreeEditor::pick(const Ray& r, Context& c) {
         consider(Gun, (int)i, rayBox(r.o, r.d, g - glm::vec3(0.4f, 0.05f, 0.4f), g + glm::vec3(0.4f, 0.3f, 0.4f), in), false);
     }
     marker(Start, 0, c.layout.start);
+    for (size_t i = 0; i < c.layout.lights.size(); ++i) {
+        bool in = false;
+        const glm::vec3& p = c.layout.lights[i].pos;
+        consider(Light, (int)i, rayBox(r.o, r.d, p - glm::vec3(0.25f), p + glm::vec3(0.25f), in), false);
+    }
     // de dentro de uma sala (a caixa dela envolve a câmera) só seleciona se não acertou mais nada
     if (bk == None) { bk = bkIn; bi = biIn; }
     kind_ = bk;
@@ -165,9 +253,19 @@ void FreeEditor::startGesture(int mode, GLFWwindow* win, Context& c, int fbw, in
     if (kind_ == None) return;
     if (mode == 2 && (kind_ == Box || kind_ == DoorSel || kind_ == ExtraDoor)) return; // alinhadas aos eixos
     if (mode == 3 && (kind_ == Spawn || kind_ == Start || kind_ == Gun || kind_ == ExtraDoor)) return;
+    if (kind_ == Light && mode == 2 && c.layout.lights[idx_].type != LightPlace::Spot && c.layout.lights[idx_].type != LightPlace::Sun &&
+        c.layout.lights[idx_].type != LightPlace::Area) return; // só luzes com direção giram
     mode_ = mode;
     axis_ = -1;
     glfwGetCursorPos(win, &mx0_, &my0_);
+    captureSel(c);
+    Ray r = mouseRay(win, fbw, fbh);
+    hit0_ = std::fabs(r.d.y) > 1e-4f ? r.o + r.d * ((pos0_.y - r.o.y) / r.d.y) : pos0_;
+    const char* names[] = {"", "Movendo", "Girando", "Escala"};
+    status_ = std::string(names[mode]) + " " + selName(c) + " - X/Y/Z trava o eixo, clique confirma, botão direito cancela";
+}
+
+void FreeEditor::captureSel(Context& c) {
     pos0_ = selPos(c);
     if (kind_ == Prop) {
         yaw0_ = c.layout.props[idx_].yaw;
@@ -180,10 +278,84 @@ void FreeEditor::startGesture(int mode, GLFWwindow* win, Context& c, int fbw, in
         yaw0_ = g != c.layout.guns.end() ? g->second.second : c.gunYaw[idx_];
     } else if (kind_ == Box) { bmin0_ = c.world.boxes[idx_].min; bmax0_ = c.world.boxes[idx_].max; }
     else if (kind_ == DoorSel) scale0_ = c.layout.doorWidth;
-    Ray r = mouseRay(win, fbw, fbh);
-    hit0_ = std::fabs(r.d.y) > 1e-4f ? r.o + r.d * ((pos0_.y - r.o.y) / r.d.y) : pos0_;
-    const char* names[] = {"", "Movendo", "Girando", "Escala"};
-    status_ = std::string(names[mode]) + " " + selName(c) + " - X/Y/Z trava o eixo, clique confirma, botão direito cancela";
+    else if (kind_ == Light) { yaw0_ = c.layout.lights[idx_].yaw; scale0_ = c.layout.lights[idx_].range; }
+}
+
+void FreeEditor::moveSel(Context& c, const glm::vec3& delta) {
+    glm::vec3 p = pos0_ + delta;
+    switch (kind_) {
+    case Prop: c.layout.props[idx_].pos = p; livePropModel(c); break;
+    case Box:
+        c.world.boxes[idx_].min = bmin0_ + delta;
+        c.world.boxes[idx_].max = bmax0_ + delta;
+        c.layout.boxes[idx_] = {c.world.boxes[idx_].min, c.world.boxes[idx_].max};
+        break;
+    case DoorSel:
+        c.layout.doorHinge = p;
+        if (c.door) c.door->hinge = p;
+        break;
+    case Spawn: c.layout.spawns[idx_] = p; break;
+    case Start: c.layout.start = p; break;
+    case Gun: c.layout.guns[idx_] = {p, yaw0_}; break;
+    case ExtraDoor: c.layout.extraDoors[idx_].hinge = p; break;
+    case Light: c.layout.lights[idx_].pos = p; break;
+    default: break;
+    }
+}
+
+float FreeEditor::gizmoLen(Context& c) const { return std::max(0.25f, glm::length(cam_ - selPos(c)) * 0.2f); }
+
+// Eixo do gizmo na tela: X, cima (Y), Z; o quadrado fica entre X e Z (move no chão).
+namespace {
+const glm::vec3 kGizmoAxis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+float segDist(glm::vec2 p, glm::vec2 a, glm::vec2 b) {
+    glm::vec2 ab = b - a;
+    float t = glm::clamp(glm::dot(p - a, ab) / std::max(glm::dot(ab, ab), 1e-6f), 0.0f, 1.0f);
+    return glm::length(p - (a + ab * t));
+}
+}
+
+int FreeEditor::gizmoPick(float mx, float my, Context& c) const {
+    const glm::mat4 vp = proj_ * view_;
+    auto toScreen = [&](const glm::vec3& p, glm::vec2& out) {
+        glm::vec4 cl = vp * glm::vec4(p, 1.0f);
+        if (cl.w < 0.05f) return false;
+        out = glm::vec2((cl.x / cl.w * 0.5f + 0.5f) * winW_, (0.5f - cl.y / cl.w * 0.5f) * winH_);
+        return true;
+    };
+    const glm::vec3 p = selPos(c);
+    const float L = gizmoLen(c);
+    const glm::vec2 m(mx, my);
+    glm::vec2 a, b;
+    // quadrado do chão primeiro (fica perto do centro)
+    glm::vec3 sq = p + glm::vec3(0.4f * L, 0.0f, 0.4f * L);
+    if (toScreen(sq, a) && glm::length(m - a) < 16.0f) return 3;
+    int best = -1;
+    float bestD = 11.0f;
+    if (!toScreen(p, a)) return -1;
+    for (int k = 0; k < 3; ++k) {
+        if (!toScreen(p + kGizmoAxis[k] * L, b)) continue;
+        float d = segDist(m, a + (b - a) * 0.15f, b);
+        if (d < bestD) { bestD = d; best = k; }
+    }
+    return best;
+}
+
+bool FreeEditor::gizmoParam(const Ray& r, int axis, glm::vec3& out) const {
+    if (axis == 3) { // plano do chão na altura do objeto
+        if (std::fabs(r.d.y) < 1e-4f) return false;
+        float t = (pos0_.y - r.o.y) / r.d.y;
+        if (t <= 0.0f || t > 500.0f) return false;
+        out = r.o + r.d * t;
+        return true;
+    }
+    // ponto do eixo mais perto do raio do mouse
+    const glm::vec3 a = kGizmoAxis[axis], w0 = pos0_ - r.o;
+    float b = glm::dot(a, r.d), den = 1.0f - b * b;
+    if (den < 1e-4f) return false; // eixo apontando para a câmera
+    float s = (b * glm::dot(r.d, w0) - glm::dot(a, w0)) / den;
+    out = pos0_ + a * s;
+    return true;
 }
 
 void FreeEditor::livePropModel(Context& c) {
@@ -206,30 +378,14 @@ void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
             if (axis_ == 0) delta.z = 0.0f;
             if (axis_ == 2) delta.x = 0.0f;
         }
-        glm::vec3 p = pos0_ + delta;
-        switch (kind_) {
-        case Prop: c.layout.props[idx_].pos = p; livePropModel(c); break;
-        case Box:
-            c.world.boxes[idx_].min = bmin0_ + delta;
-            c.world.boxes[idx_].max = bmax0_ + delta;
-            c.layout.boxes[idx_] = {c.world.boxes[idx_].min, c.world.boxes[idx_].max};
-            break;
-        case DoorSel:
-            c.layout.doorHinge = p;
-            if (c.door) c.door->hinge = p;
-            break;
-        case Spawn: c.layout.spawns[idx_] = p; break;
-        case Start: c.layout.start = p; break;
-        case Gun: c.layout.guns[idx_] = {p, yaw0_}; break;
-        case ExtraDoor: c.layout.extraDoors[idx_].hinge = p; break;
-        default: break;
-        }
+        moveSel(c, delta);
     } else if (mode_ == 2) {
         float yaw = yaw0_ + (float)(mx - mx0_) * 0.01f;
         if (kind_ == Prop) { c.layout.props[idx_].yaw = yaw; livePropModel(c); }
         else if (kind_ == Spawn) c.layout.spawnYaw[idx_] = yaw;
         else if (kind_ == Start) c.layout.startYaw = yaw;
         else if (kind_ == Gun) c.layout.guns[idx_] = {pos0_, yaw};
+        else if (kind_ == Light) c.layout.lights[idx_].yaw = yaw;
     } else if (mode_ == 3) {
         float f = std::exp((float)(mx - mx0_) * 0.005f);
         if (kind_ == Prop) { c.layout.props[idx_].scale = std::max(0.01f, scale0_ * f); livePropModel(c); }
@@ -241,6 +397,8 @@ void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
             c.world.boxes[idx_].min = ctr - nh;
             c.world.boxes[idx_].max = ctr + nh;
             c.layout.boxes[idx_] = {c.world.boxes[idx_].min, c.world.boxes[idx_].max};
+        } else if (kind_ == Light) {
+            c.layout.lights[idx_].range = std::clamp(scale0_ * f, 0.3f, 80.0f); // S: alcance
         } else if (kind_ == DoorSel) {
             c.layout.doorWidth = std::clamp(scale0_ * f, 0.5f, 3.0f);
             if (c.door) c.door->width = c.layout.doorWidth;
@@ -270,8 +428,94 @@ void FreeEditor::restore(Context& c) {
     case Start: c.layout.start = pos0_; c.layout.startYaw = yaw0_; break;
     case Gun: c.layout.guns[idx_] = {pos0_, yaw0_}; break;
     case ExtraDoor: c.layout.extraDoors[idx_].hinge = pos0_; break;
+    case Light:
+        c.layout.lights[idx_].pos = pos0_;
+        c.layout.lights[idx_].yaw = yaw0_;
+        c.layout.lights[idx_].range = scale0_;
+        break;
     default: break;
     }
+}
+
+FreeEditor::UndoState FreeEditor::snapshot(Context& c, bool withGround) const {
+    UndoState s;
+    s.layout = c.layout.serialize();
+    if (withGround && c.paint && c.paint->active) { s.hasPaint = true; s.paint = c.paint->weights; }
+    if (withGround && c.terrain && c.terrain->active) { s.hasTerrain = true; s.terrain = c.terrain->h; }
+    return s;
+}
+
+void FreeEditor::pushUndo(UndoState s) {
+    undo_.push_back(std::move(s));
+    if (undo_.size() > 60) undo_.erase(undo_.begin());
+    redo_.clear();
+}
+
+void FreeEditor::restoreSnapshot(Context& c, const UndoState& s) {
+    c.layout = LevelLayout();
+    c.layout.parse(s.layout);
+    if (s.hasPaint && c.paint && c.paint->weights.size() == s.paint.size()) {
+        c.paint->weights = s.paint;
+        c.paint->uploadWeights();
+    }
+    if (s.hasTerrain && c.terrain && c.terrain->h.size() == s.terrain.size()) {
+        c.terrain->h = s.terrain;
+        c.terrain->upload();
+    }
+    lastLayout_ = c.layout.serialize();
+}
+
+FreeEditor::Result FreeEditor::undoRedo(Context& c, bool redo) {
+    std::vector<UndoState>& from = redo ? redo_ : undo_;
+    std::vector<UndoState>& to = redo ? undo_ : redo_;
+    if (from.empty()) {
+        status_ = redo ? "Nada para refazer" : "Nada para desfazer";
+        return Result::None;
+    }
+    UndoState s = std::move(from.back());
+    from.pop_back();
+    to.push_back(snapshot(c, s.hasPaint || s.hasTerrain)); // o estado de agora, para voltar
+    restoreSnapshot(c, s);
+    kind_ = None;
+    idx_ = -1;
+    dirty_ = true;
+    status_ = std::string(redo ? "Refeito" : "Desfeito") + " (" + std::to_string(undo_.size()) + " para desfazer)";
+    return Result::Rebuild;
+}
+
+bool FreeEditor::duplicateSelected(Context& c) {
+    if (kind_ == Prop) {
+        PropPlace p = c.layout.props[idx_];
+        if (p.asset.empty()) { status_ = "Esse objeto faz parte do cenário e não pode ser duplicado"; return false; }
+        std::string base = p.name;
+        while (!base.empty() && (std::isdigit((unsigned char)base.back()) || base.back() == '_')) base.pop_back();
+        int n = 2;
+        do p.name = base + "_" + std::to_string(n++);
+        while (c.layout.prop(p.name));
+        c.layout.props.push_back(p);
+        // aparece já (mesma malha); a colisão vem ao confirmar
+        RenderScene::Prop rp = c.props[idx_];
+        c.props.push_back(rp);
+        c.propMeshes.push_back(idx_ < (int)c.propMeshes.size() ? c.propMeshes[idx_] : nullptr);
+        c.propTris.push_back(idx_ < (int)c.propTris.size() ? c.propTris[idx_] : nullptr);
+        idx_ = (int)c.layout.props.size() - 1;
+    } else if (kind_ == ExtraDoor) {
+        c.layout.extraDoors.push_back(c.layout.extraDoors[idx_]);
+        idx_ = (int)c.layout.extraDoors.size() - 1;
+    } else if (kind_ == Light) {
+        c.layout.lights.push_back(c.layout.lights[idx_]);
+        idx_ = (int)c.layout.lights.size() - 1;
+    } else if (kind_ == Spawn) {
+        c.layout.spawns.push_back(c.layout.spawns[idx_]);
+        c.layout.spawnYaw.push_back(c.layout.spawnYaw[idx_]);
+        idx_ = (int)c.layout.spawns.size() - 1;
+    } else {
+        status_ = "Só objetos, portas, luzes e inimigos podem ser duplicados";
+        return false;
+    }
+    dirty_ = true;
+    status_ = "Duplicado: " + selName(c) + " - mova e clique para soltar";
+    return true;
 }
 
 bool FreeEditor::removeSelected(Context& c) {
@@ -280,6 +524,8 @@ bool FreeEditor::removeSelected(Context& c) {
     } else if (kind_ == Spawn && c.layout.spawns.size() > 1) {
         c.layout.spawns.erase(c.layout.spawns.begin() + idx_);
         c.layout.spawnYaw.erase(c.layout.spawnYaw.begin() + idx_);
+    } else if (kind_ == Light) {
+        c.layout.lights.erase(c.layout.lights.begin() + idx_);
     } else if (kind_ == ExtraDoor) {
         c.layout.extraDoors.erase(c.layout.extraDoors.begin() + idx_);
     } else if (kind_ == Gun && c.layout.guns.count(idx_)) {
@@ -341,6 +587,51 @@ bool FreeEditor::groundHit(const Ray& r, Context& c, glm::vec3& out) const {
     return true;
 }
 
+bool FreeEditor::surfaceHit(const Ray& r, Context& c, glm::vec3& pos, glm::vec3& normal) const {
+    float best = 1e30f;
+    glm::vec3 bestN(0.0f, 1.0f, 0.0f);
+    for (size_t i = 0; i < c.props.size() && i < c.propTris.size(); ++i) {
+        const std::vector<glm::vec3>* tris = c.propTris[i];
+        if (!tris || tris->empty() || !c.props[i].mesh) continue;
+        const glm::mat4& M = c.props[i].model;
+        glm::mat4 inv = glm::inverse(M);
+        glm::vec3 o = glm::vec3(inv * glm::vec4(r.o, 1.0f)), d = glm::vec3(inv * glm::vec4(r.d, 0.0f));
+        bool in = false;
+        if (i < c.propMeshes.size() && c.propMeshes[i]) {
+            float tb = rayBox(o, d, c.propMeshes[i]->boundsMin - glm::vec3(0.01f), c.propMeshes[i]->boundsMax + glm::vec3(0.01f), in);
+            if (tb < 0.0f && !in) continue;
+            if (tb > best) continue;
+        }
+        // Möller-Trumbore em todos os triângulos (t no mesmo parâmetro do raio do mundo)
+        for (size_t k = 0; k + 2 < tris->size(); k += 3) {
+            const glm::vec3 &a = (*tris)[k], &b = (*tris)[k + 1], &cc = (*tris)[k + 2];
+            glm::vec3 e1 = b - a, e2 = cc - a, pv = glm::cross(d, e2);
+            float det = glm::dot(e1, pv);
+            if (std::fabs(det) < 1e-12f) continue;
+            float inv_ = 1.0f / det;
+            glm::vec3 tv = o - a;
+            float u = glm::dot(tv, pv) * inv_;
+            if (u < 0.0f || u > 1.0f) continue;
+            glm::vec3 qv = glm::cross(tv, e1);
+            float v = glm::dot(d, qv) * inv_;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float t = glm::dot(e2, qv) * inv_;
+            if (t > 1e-4f && t < best) {
+                best = t;
+                bestN = glm::normalize(glm::transpose(glm::inverse(glm::mat3(M))) * glm::cross(e1, e2));
+            }
+        }
+    }
+    // blocos e chão: só se nenhum modelo foi acertado ou se o bloco está bem na frente (a colisão
+    // gerada da malha fica uns centímetros fora da parede e não pode ganhar dela)
+    World::RayHit h = c.world.raycastHit(r.o, r.d, 400.0f);
+    if (h.hit && (best > 1e29f || h.t < best - 0.3f)) { best = h.t; bestN = h.normal; }
+    if (best > 1e29f) return false;
+    pos = r.o + r.d * best;
+    normal = glm::dot(bestN, r.d) > 0.0f ? -bestN : bestN;
+    return true;
+}
+
 FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int fbw, int fbh, glm::mat4& view,
                                       glm::mat4& proj, glm::vec3& camPos) {
     Result res = Result::None;
@@ -352,7 +643,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
     };
     double mx, my;
     glfwGetCursorPos(win, &mx, &my);
-    const bool lmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    bool lmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     const bool rmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     bool lmbPress = lmb && !lmbWas_, rmbPress = rmb && !rmbWas_;
     if (const char* ck = getenv("GA_CLICK")) { // depuração: "quadro x y" clica na vista nesse quadro
@@ -365,6 +656,62 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
             lmbPress = true;
             viewHovered_ = true;
         }
+    }
+    fakeMouse_ = false;
+    if (const char* dg = getenv("GA_DRAG")) { // depuração: "quadro x0 y0 x1 y1 quadros" arrasta segurando o botão
+        static int fr = 0;
+        int at = 0, n = 1;
+        float x0, y0, x1, y1;
+        ++fr;
+        if (std::sscanf(dg, "%d %f %f %f %f %d", &at, &x0, &y0, &x1, &y1, &n) == 6 && fr >= at && fr <= at + n + 1) {
+            float k = std::min(1.0f, (float)(fr - at) / n);
+            mx = fakeMx_ = x0 + (x1 - x0) * k;
+            my = fakeMy_ = y0 + (y1 - y0) * k;
+            fakeMouse_ = true;
+            viewHovered_ = true;
+            lmbPress = fr == at;
+            lmb = fr <= at + n;
+        }
+    }
+    if (lmbPress && getenv("GA_CLICK")) { fakeMouse_ = true; fakeMx_ = mx; fakeMy_ = my; }
+
+    if (getenv("GA_PAINT")) { // depuração: abre o pincel numa aba (0 textura...)
+        static bool once = false;
+        if (!once) { once = true; paintMode_ = true; paintTab_ = selectTab_ = std::atoi(getenv("GA_PAINT")); }
+    }
+    // desfazer: foto quando o cenário muda (fora de gestos, arrastes e campos sendo editados)
+    if (lastScene_ != c.sceneId) { // outro cenário: histórico novo
+        undo_.clear();
+        redo_.clear();
+        lastLayout_ = c.layout.serialize();
+        lastScene_ = c.sceneId;
+    } else if (mode_ == 0 && gizmoAxis_ < 0 && !brushing_ && !ImGui::IsAnyItemActive()) {
+        std::string now = c.layout.serialize();
+        if (now != lastLayout_) {
+            if (!skipNextChange_) {
+                UndoState u;
+                u.layout = lastLayout_;
+                pushUndo(u);
+            }
+            skipNextChange_ = false;
+            lastLayout_ = now;
+        }
+    }
+    {
+        const bool ctrl = keyDown(win, GLFW_KEY_LEFT_CONTROL) || keyDown(win, GLFW_KEY_RIGHT_CONTROL);
+        const bool shiftK = keyDown(win, GLFW_KEY_LEFT_SHIFT) || keyDown(win, GLFW_KEY_RIGHT_SHIFT);
+        const bool z = keyDown(win, GLFW_KEY_Z), y = keyDown(win, GLFW_KEY_Y);
+        if (const char* uf = getenv("GA_UNDO")) { // depuração: Ctrl+Z no quadro N
+            static int fr = 0;
+            if (++fr == std::atoi(uf)) res = undoRedo(c, false);
+        }
+        if (ctrl && mode_ == 0 && gizmoAxis_ < 0 && !brushing_ && !io.WantTextInput) {
+            if (z && !zWas_) res = undoRedo(c, shiftK);
+            else if (y && !yWas_) res = undoRedo(c, true);
+        }
+        zWas_ = z;
+        yWas_ = y;
+        if (ctrl) { prevKey_[GLFW_KEY_Z] = z; prevKey_[GLFW_KEY_Y] = y; } // Ctrl+Z não trava eixo
     }
     lmbWas_ = lmb;
     rmbWas_ = rmb;
@@ -423,13 +770,22 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
             brushHasHit_ = false;
             if (inView || brushing_) {
                 Ray ray = mouseRay(win, fbw, fbh);
-                World::RayHit h = c.world.raycastHit(ray.o, ray.d, 400.0f);
-                if (h.hit) { brushHit_ = ray.o + ray.d * h.t; brushHasHit_ = true; }
+                if (paintTab_ == 3) {
+                    brushHasHit_ = surfaceHit(ray, c, brushHit_, brushNormal_);
+                    brushView_ = ray.d;
+                }
+                else {
+                    World::RayHit h = c.world.raycastHit(ray.o, ray.d, 400.0f);
+                    if (h.hit) { brushHit_ = ray.o + ray.d * h.t; brushHasHit_ = true; }
+                }
             }
             invert_ = keyDown(win, GLFW_KEY_LEFT_SHIFT) || keyDown(win, GLFW_KEY_RIGHT_SHIFT);
             if (lmbPress && inView && brushHasHit_ && !rmb) {
                 brushing_ = true;
+                pushUndo(snapshot(c, true)); // pincelada: pintura do chão e relevo antes dela
+                skipNextChange_ = true;
                 strokeProps_ = false;
+                hasLastStamp_ = false;
                 float y;
                 levelY_ = c.terrain && c.terrain->heightAt(brushHit_.x, brushHit_.z, y) ? y : brushHit_.y;
             }
@@ -439,9 +795,38 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
                 dirty_ = true;
                 if (strokeProps_) res = Result::Rebuild; // folhagem nova: refaz colisões
             }
-        } else if (lmbPress && inView) pick(mouseRay(win, fbw, fbh), c);
+        } else {
+            // setas de mover (como no Blender): passar o mouse acende, clicar e arrastar move nesse eixo
+            if (gizmoAxis_ < 0) gizmoHover_ = kind_ != None && inView && !rmb ? gizmoPick((float)mx, (float)my, c) : -1;
+            if (gizmoAxis_ >= 0) {
+                if (lmb) {
+                    glm::vec3 now;
+                    if (gizmoParam(mouseRay(win, fbw, fbh), gizmoAxis_, now)) {
+                        glm::vec3 d = now - gizmoHit0_;
+                        if (gizmoAxis_ == 3) d.y = 0.0f;
+                        moveSel(c, d);
+                    }
+                } else { // soltou: confirma
+                    gizmoAxis_ = -1;
+                    dirty_ = true;
+                    status_ = "Movido: " + selName(c) + " (lembre de salvar)";
+                    res = Result::Rebuild;
+                }
+            } else if (lmbPress && inView && gizmoHover_ >= 0) {
+                captureSel(c);
+                if (gizmoParam(mouseRay(win, fbw, fbh), gizmoHover_, gizmoHit0_)) {
+                    gizmoAxis_ = gizmoHover_;
+                    const char* nm[] = {"X", "altura", "Z", "chão"};
+                    status_ = std::string("Movendo em ") + nm[gizmoAxis_] + " (solte para confirmar)";
+                }
+            } else if (lmbPress && inView) pick(mouseRay(win, fbw, fbh), c);
+        }
         if (pressed(GLFW_KEY_ESCAPE)) { kind_ = None; idx_ = -1; status_ = "Nada selecionado"; }
         if (pressed(GLFW_KEY_DELETE) && kind_ != None && removeSelected(c)) res = Result::Rebuild;
+        // Shift+D: duplica e a cópia já sai grudada no mouse (clique solta, botão direito desiste da posição)
+        const bool shift = keyDown(win, GLFW_KEY_LEFT_SHIFT) || keyDown(win, GLFW_KEY_RIGHT_SHIFT);
+        if (pressed(GLFW_KEY_D) && shift && !rmb && !paintMode_ && kind_ != None && duplicateSelected(c))
+            startGesture(1, win, c, fbw, fbh);
         if (pressed(GLFW_KEY_F) && !rmb && kind_ != None) { // foca no selecionado
             glm::vec3 p = selPos(c);
             cam_ = p - fwd * 4.0f + glm::vec3(0.0f, 1.0f, 0.0f);
@@ -462,7 +847,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
             status_ = "Cancelado";
         }
     }
-    for (int k : {GLFW_KEY_G, GLFW_KEY_R, GLFW_KEY_S, GLFW_KEY_X, GLFW_KEY_Y, GLFW_KEY_Z, GLFW_KEY_ESCAPE, GLFW_KEY_DELETE, GLFW_KEY_F})
+    for (int k : {GLFW_KEY_G, GLFW_KEY_R, GLFW_KEY_S, GLFW_KEY_X, GLFW_KEY_Y, GLFW_KEY_Z, GLFW_KEY_ESCAPE, GLFW_KEY_DELETE, GLFW_KEY_F, GLFW_KEY_D})
         prevKey_[k] = keyDown(win, k);
     view = view_;
     proj = proj_;
@@ -472,7 +857,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
 
 // ---------------------------------------------------------------- navegador de conteúdo
 namespace {
-const char* kCategories[] = {"Todos", "Cenário", "Armas", "Personagens", "Animações", "Importados"};
+const char* kCategories[] = {"Todos", "Cenário", "Armas", "Personagens", "Animações", "Importados", "Luzes"};
 
 std::string lower(std::string s) {
     for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
@@ -508,6 +893,13 @@ void FreeEditor::scanAssets(const Context& c) {
         assetList_.push_back(a);
     };
     assetList_.push_back({"@porta", "Porta", 1, -1}); // porta de madeira que abre empurrando
+    assetList_.push_back({"@porta_vidro", "Porta de vidro", 1, -1}); // vidro com moldura de alumínio
+    // luzes (as do Blender + ambiente)
+    assetList_.push_back({"@luz_ponto", "Luz pontual", 6, -1});
+    assetList_.push_back({"@luz_spot", "Luz spot", 6, -1});
+    assetList_.push_back({"@luz_area", "Luz de área", 6, -1});
+    assetList_.push_back({"@luz_sol", "Sol", 6, -1});
+    assetList_.push_back({"@luz_ambiente", "Luz ambiente", 6, -1});
     for (auto& e : fs::directory_iterator(root_, ec))
         if (e.is_regular_file(ec) && isModel(e.path())) add(e.path());
     for (const char* dir : {"armas", "elements-cenari", "assets", "animation-teste"}) {
@@ -528,10 +920,34 @@ bool FreeEditor::placeAsset(const Asset& a, const glm::vec3& pos, Context& c) {
         status_ = "Animações não vão para o cenário";
         return false;
     }
-    if (a.rel == "@porta") { // folha na parede de frente para a câmera, centrada onde soltou
+    if (a.rel.rfind("@luz_", 0) == 0) { // luz: um pouco acima de onde soltou
+        LightPlace li;
+        const std::string t = a.rel.substr(5);
+        li.type = t == "spot" ? LightPlace::Spot : t == "ambiente" ? LightPlace::Ambient : t == "sol" ? LightPlace::Sun
+                : t == "area" ? LightPlace::Area : LightPlace::Point;
+        li.pos = pos + glm::vec3(0.0f, li.type == LightPlace::Ambient ? 1.5f : li.type == LightPlace::Sun ? 4.0f : 2.4f, 0.0f);
+        li.yaw = yaw_;
+        switch (li.type) {
+        case LightPlace::Spot: li.intensity = 25.0f; li.range = 12.0f; break;
+        case LightPlace::Ambient: li.intensity = 0.6f; li.range = 5.0f; li.color = glm::vec3(1.0f, 0.95f, 0.88f); break;
+        case LightPlace::Sun: li.intensity = 2.0f; li.pitch = glm::radians(-50.0f); li.color = glm::vec3(1.0f, 0.93f, 0.82f); break;
+        case LightPlace::Area: li.intensity = 10.0f; li.range = 10.0f; li.size = 1.0f; li.color = glm::vec3(1.0f, 0.97f, 0.92f); break;
+        default: break;
+        }
+        c.layout.lights.push_back(li);
+        kind_ = Light;
+        idx_ = (int)c.layout.lights.size() - 1;
+        dirty_ = true;
+        status_ = "Luz posta: " + a.name + " (ajuste cor, força e alcance nos detalhes)";
+        return true;
+    }
+    if (a.rel == "@porta" || a.rel == "@porta_vidro") { // folha de frente para a câmera, centrada onde soltou
         DoorPlace d;
-        d.alongX = std::fabs(std::cos(yaw_)) >= std::fabs(std::sin(yaw_));
-        d.hinge = pos - (d.alongX ? glm::vec3(d.width * 0.5f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, d.width * 0.5f));
+        d.glass = a.rel == "@porta_vidro";
+        if (d.glass) { d.width = 1.0f; d.height = 2.2f; }
+        // de frente para a câmera, no ângulo reto mais próximo (depois gira à vontade)
+        d.yaw = std::round((3.14159265f + yaw_) / 1.5707963f) * 1.5707963f;
+        d.hinge = pos - d.axis() * (d.width * 0.5f);
         c.layout.extraDoors.push_back(d);
         kind_ = ExtraDoor;
         idx_ = (int)c.layout.extraDoors.size() - 1;
@@ -546,6 +962,40 @@ bool FreeEditor::placeAsset(const Asset& a, const glm::vec3& pos, Context& c) {
         dirty_ = true;
         status_ = "Arma posta: " + c.gunNames[a.gun];
         return true;
+    }
+    // arquivo com vários objetos dentro (casa com porta, janelas, móveis...): uma peça por objeto,
+    // cada uma no lugar que tem no arquivo; dá para mover, girar, pintar e apagar cada uma
+    std::vector<std::string> parts = CharacterModel::listParts(root_ + "/" + a.rel);
+    if (!parts.empty() && c.assets) {
+        float minY = 1e9f;
+        std::vector<int> ok;
+        for (int k = 0; k < (int)parts.size(); ++k) {
+            if (parts[k].empty()) continue;
+            CharacterModel* pm = c.assets->mesh(a.rel + "#" + std::to_string(k));
+            if (!pm) continue;
+            minY = std::min(minY, pm->boundsMin.y);
+            ok.push_back(k);
+        }
+        if (!ok.empty()) {
+            const float yaw = yaw_ + 3.14159f;
+            for (int k : ok) {
+                PropPlace p;
+                std::string base = a.name + "_" + parts[k];
+                for (char& ch : base) if (ch == ' ') ch = '_';
+                int n = 1;
+                do p.name = base + (n > 1 ? "_" + std::to_string(n) : "");
+                while (c.layout.prop(p.name) && ++n);
+                p.asset = a.rel + "#" + std::to_string(k);
+                p.pos = pos - glm::vec3(0.0f, minY, 0.0f); // o conjunto apoiado no chão
+                p.yaw = yaw;
+                c.layout.props.push_back(p);
+            }
+            kind_ = Prop;
+            idx_ = (int)c.layout.props.size() - 1;
+            dirty_ = true;
+            status_ = "Adicionado " + a.name + " em " + std::to_string(ok.size()) + " partes separadas";
+            return true;
+        }
     }
     CharacterModel* m = c.assets ? c.assets->mesh(a.rel) : nullptr;
     if (!m) {
@@ -577,7 +1027,7 @@ void FreeEditor::startImport(bool image) {
     std::shared_ptr<Import> job = import_;
     std::thread([job]() {
         const char* cmd = job->image
-            ? "zenity --file-selection --title='Importar textura' "
+            ? "zenity --file-selection --multiple --separator='|' --title='Importar textura (pode escolher todos os mapas juntos)' "
               "--file-filter='Imagens (png, jpg) | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG' 2>/dev/null"
             : "zenity --file-selection --title='Importar modelo 3D' "
               "--file-filter='Modelos 3D (glb, gltf, fbx, obj) | *.glb *.gltf *.fbx *.obj *.GLB *.FBX' 2>/dev/null";
@@ -820,6 +1270,12 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
             }
             if (!p.asset.empty()) {
                 ImGui::Spacing();
+                if (ImGui::Button("Pintar textura neste modelo", ImVec2(-1, 0))) {
+                    paintMode_ = true;
+                    paintTab_ = 3;
+                    selectTab_ = 3;
+                    status_ = "Pintar textura: clique e arraste em cima do modelo (Shift apaga)";
+                }
                 if (ImGui::Button("Duplicar")) {
                     PropPlace d = p;
                     int n = 1;
@@ -861,9 +1317,67 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
                 track(ImGui::DragFloat3("Dobradiça", &d.hinge.x, 0.01f));
                 track(ImGui::DragFloat("Largura", &d.width, 0.01f, 0.5f, 3.0f));
                 track(ImGui::DragFloat("Altura", &d.height, 0.01f, 1.5f, 3.5f));
-                if (ImGui::Button("Girar 90°")) { d.alongX = !d.alongX; finished = true; }
+                float yawDeg = glm::degrees(d.yaw);
+                track(ImGui::DragFloat("Ângulo (°)", &yawDeg, 0.5f));
+                d.yaw = glm::radians(yawDeg);
+                if (ImGui::Checkbox("Vidro", &d.glass)) finished = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Espelhada", &d.mirror)) finished = true;
+                if (d.glass) {
+                    ImGui::ColorEdit3("Cor do vidro", &d.glassColor.x);
+                    finished |= ImGui::IsItemDeactivatedAfterEdit();
+                    ImGui::TextDisabled("Escuro = vidro fumê; claro = transparente.");
+                } else {
+                    // textura da folha: miniaturas das imagens (cor) + madeira padrão
+                    ImGui::TextUnformatted("Textura da porta");
+                    if (ImGui::Button(d.texture.empty() ? "Madeira (padrão)" : "Voltar à madeira")) { d.texture.clear(); finished = true; }
+                    int col = 0;
+                    for (size_t si = 0; si < texSets_.size(); ++si) {
+                        const TexSet& t = texSets_[si];
+                        ImGui::PushID((int)si + 1000);
+                        if (col++ % 4) ImGui::SameLine();
+                        bool cur = d.texture == t.color;
+                        if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.95f, 0.62f, 0.16f, 1.0f));
+                        if (ImGui::ImageButton("##tx", (ImTextureID)(intptr_t)thumb(t.color), ImVec2(52, 52))) { d.texture = t.color; finished = true; }
+                        if (cur) ImGui::PopStyleColor();
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.name.c_str());
+                        ImGui::PopID();
+                    }
+                    if (texSets_.empty()) ImGui::TextDisabled("Nenhuma imagem em textures/ (use Importar)");
+                }
+                if (ImGui::Button("Girar 90°")) { d.yaw += 1.5707963f; finished = true; }
                 ImGui::SameLine();
                 if (ImGui::Button("Remover (Delete)") && removeSelected(c)) res = Result::Rebuild;
+            }
+        } else if (kind_ == Light) {
+            LightPlace& li = c.layout.lights[idx_];
+            if (section("Luz")) {
+                const char* tn[] = {"Pontual", "Spot", "Ambiente", "Sol", "Área"};
+                if (ImGui::Combo("Tipo", &li.type, tn, 5)) finished = true;
+                track(ImGui::DragFloat3("Posição", &li.pos.x, 0.01f));
+                track(ImGui::ColorEdit3("Cor", &li.color.x));
+                track(ImGui::DragFloat("Força", &li.intensity, 0.05f, 0.0f, 500.0f, "%.2f"));
+                if (li.type != LightPlace::Sun) track(ImGui::DragFloat("Alcance (m)", &li.range, 0.05f, 0.3f, 80.0f, "%.1f"));
+                if (li.type == LightPlace::Spot || li.type == LightPlace::Sun || li.type == LightPlace::Area) {
+                    float yawDeg = glm::degrees(li.yaw), pitchDeg = glm::degrees(li.pitch);
+                    track(ImGui::DragFloat("Giro (°)", &yawDeg, 0.5f));
+                    track(ImGui::DragFloat("Inclinação (°)", &pitchDeg, 0.5f, -90.0f, 90.0f));
+                    li.yaw = glm::radians(yawDeg);
+                    li.pitch = glm::radians(pitchDeg);
+                }
+                if (li.type == LightPlace::Spot) {
+                    track(ImGui::DragFloat("Cone (°)", &li.outer, 0.2f, 2.0f, 89.0f, "%.0f"));
+                    track(ImGui::DragFloat("Borda macia (°)", &li.inner, 0.2f, 0.0f, li.outer, "%.0f"));
+                }
+                if (li.type == LightPlace::Area) track(ImGui::DragFloat("Tamanho (m)", &li.size, 0.01f, 0.05f, 10.0f, "%.2f"));
+                ImGui::TextDisabled("%s", li.type == LightPlace::Ambient ? "Clareia por igual tudo dentro do alcance (salas escuras)."
+                                    : li.type == LightPlace::Sun ? "Luz de longe numa direção, vale para o cenário todo."
+                                    : li.type == LightPlace::Area ? "Painel que ilumina para a frente; maior = luz mais macia."
+                                    : li.type == LightPlace::Spot ? "Cone de luz (lanterna, luminária)." : "Lâmpada: ilumina para todo lado.");
+                if (ImGui::Button("Duplicar (Shift+D)")) duplicateSelected(c);
+                ImGui::SameLine();
+                if (ImGui::Button("Remover (Delete)") && removeSelected(c)) res = Result::Rebuild;
+                if (edited) dirty_ = true;
             }
         } else if (kind_ == Spawn || kind_ == Start) {
             glm::vec3& p = kind_ == Spawn ? c.layout.spawns[idx_] : c.layout.start;
@@ -903,7 +1417,9 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
         std::error_code ec;
         auto sz = std::filesystem::file_size(std::filesystem::path(root_) / a.rel, ec);
         if (a.rel[0] != '@') ImGui::Text("Tipo: %s   %.1f MB", kCategories[a.category], ec ? 0.0 : sz / 1048576.0);
-        else ImGui::TextWrapped("Porta de madeira que abre empurrando (mão ou ombro). No cenário oficial o vão é recortado na parede.");
+        else if (a.rel.rfind("@luz_", 0) == 0) ImGui::TextWrapped("Luz: arraste para a vista. Cor, força, alcance e direção ficam nos detalhes.");
+        else if (a.rel == "@porta_vidro") ImGui::TextWrapped("Porta de vidro com moldura de alumínio: abre empurrando. A cor do vidro muda nos detalhes da porta.");
+        else ImGui::TextWrapped("Porta de madeira que abre empurrando (mão ou ombro). A textura muda nos detalhes da porta.");
         if (a.category != 4 && a.gun < 0 && collisionCombo(c.assets, a.rel)) res = Result::Rebuild;
         ImGui::Spacing();
         if (a.category == 4) ImGui::TextWrapped("Animação: usada pelo personagem, não vai para o cenário.");
@@ -968,6 +1484,19 @@ void FreeEditor::drawOutliner(Context& c, const Rect& r) {
         for (size_t i = 0; i < c.gunNames.size(); ++i) item(Gun, (int)i, "Arma: " + c.gunNames[i]);
         ImGui::TreePop();
     }
+    if (!c.layout.lights.empty() && ImGui::TreeNodeEx("Luzes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        Kind k0 = kind_;
+        int i0 = idx_;
+        for (size_t i = 0; i < c.layout.lights.size(); ++i) {
+            kind_ = Light;
+            idx_ = (int)i;
+            std::string nm = selName(c);
+            kind_ = k0;
+            idx_ = i0;
+            item(Light, (int)i, nm);
+        }
+        ImGui::TreePop();
+    }
     if (ImGui::TreeNode("Blocos")) {
         for (size_t i = 0; i < c.world.boxes.size(); ++i)
             if (!c.world.boxes[i].hidden && c.world.boxes[i].solid) item(Box, (int)i, "Bloco " + std::to_string(i));
@@ -990,7 +1519,7 @@ void FreeEditor::drawContent(Context& c, Result& res, const Rect& r) {
     ImGui::TextDisabled("%s", status_.c_str());
     ImGui::Separator();
     ImGui::BeginChild("pastas", ImVec2(150, 0), true);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         int n = 0;
         for (const Asset& a : assetList_) n += i == 0 || a.category == i;
         if (ImGui::Selectable((std::string(kCategories[i]) + " (" + std::to_string(n) + ")").c_str(), category_ == i)) category_ = i;
@@ -1017,11 +1546,37 @@ void FreeEditor::drawContent(Context& c, Result& res, const Rect& r) {
         bool hov = ImGui::IsItemHovered(), sel = selAsset_ == i && kind_ == None;
         dl->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile + 30), sel ? IM_COL32(70, 60, 40, 255) : hov ? IM_COL32(55, 55, 60, 255) : IM_COL32(38, 38, 42, 255), 4.0f);
         dl->AddRectFilled(ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + tile - 4, p.y + tile - 4), IM_COL32(24, 24, 27, 255), 3.0f);
-        if (a.rel == "@porta") { // ícone de porta
+        if (a.rel == "@porta" || a.rel == "@porta_vidro") { // ícone de porta (vidro: azulada com moldura)
+            const bool gl = a.rel == "@porta_vidro";
             ImVec2 c0(p.x + tile * 0.33f, p.y + tile * 0.18f), c1(p.x + tile * 0.67f, p.y + tile * 0.82f);
-            dl->AddRectFilled(c0, c1, IM_COL32(150, 95, 50, 255), 2.0f);
+            dl->AddRectFilled(c0, c1, gl ? IM_COL32(150, 190, 205, 170) : IM_COL32(150, 95, 50, 255), 2.0f);
+            if (gl) {
+                dl->AddRect(c0, c1, IM_COL32(190, 190, 195, 255), 2.0f, 0, 3.0f);
+                dl->AddLine(ImVec2(c0.x + 6, c1.y - 10), ImVec2(c1.x - 10, c0.y + 8), IM_COL32(235, 245, 250, 160), 2.0f);
+            }
             dl->AddRect(ImVec2(c0.x - 3, c0.y - 3), ImVec2(c1.x + 3, c1.y), IM_COL32(90, 70, 55, 255), 2.0f, 0, 3.0f);
             dl->AddCircleFilled(ImVec2(c1.x - 7, (c0.y + c1.y) * 0.5f), 2.5f, IM_COL32(220, 210, 180, 255));
+        } else if (a.rel.rfind("@luz_", 0) == 0) { // ícones de luz
+            ImVec2 cc(p.x + tile * 0.5f, p.y + tile * 0.47f);
+            const ImU32 yel = IM_COL32(255, 210, 90, 255), soft = IM_COL32(255, 210, 90, 70);
+            const std::string t = a.rel.substr(5);
+            if (t == "ambiente") {
+                for (int k = 4; k >= 1; --k) dl->AddCircleFilled(cc, 7.0f * k, IM_COL32(255, 210, 90, 40 + 20 * (4 - k)));
+            } else if (t == "spot") {
+                dl->AddTriangleFilled(ImVec2(cc.x, cc.y - 22), ImVec2(cc.x - 22, cc.y + 22), ImVec2(cc.x + 22, cc.y + 22), soft);
+                dl->AddCircleFilled(ImVec2(cc.x, cc.y - 22), 7.0f, yel);
+            } else if (t == "area") {
+                dl->AddRectFilled(ImVec2(cc.x - 18, cc.y - 18), ImVec2(cc.x + 18, cc.y - 8), yel, 2.0f);
+                for (int k = -1; k <= 1; ++k) dl->AddLine(ImVec2(cc.x + k * 12, cc.y - 4), ImVec2(cc.x + k * 16, cc.y + 20), yel, 2.0f);
+            } else { // ponto e sol: círculo com raios
+                const float r = t == "sol" ? 11.0f : 8.0f;
+                dl->AddCircleFilled(cc, r, yel);
+                for (int k = 0; k < 8; ++k) {
+                    float an = k * 0.785398f, r1 = r + (t == "sol" ? 14.0f : 10.0f);
+                    dl->AddLine(ImVec2(cc.x + std::cos(an) * (r + 5), cc.y + std::sin(an) * (r + 5)),
+                                ImVec2(cc.x + std::cos(an) * r1, cc.y + std::sin(an) * r1), yel, 2.0f);
+                }
+            }
         } else
             assetIcon(dl, ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + tile - 4, p.y + tile - 4), a.category);
         if (sel) dl->AddRect(p, ImVec2(p.x + tile, p.y + tile + 30), IM_COL32(240, 160, 40, 255), 4.0f, 0, 2.0f);
@@ -1056,13 +1611,31 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
         const bool image = import_->image;
         import_.reset();
         if (!src.empty() && image) {
+            // vários arquivos (todos os mapas de um material): copia todos para textures/
             std::error_code ec;
-            fs::path dst = fs::path(root_) / "textures" / fs::path(src).filename();
-            fs::create_directories(dst.parent_path(), ec);
-            fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-            status_ = ec ? "Erro ao importar: " + ec.message() : "Textura importada: " + dst.filename().string();
+            std::vector<std::string> files;
+            for (size_t a = 0;;) {
+                size_t bar = src.find('|', a);
+                files.push_back(src.substr(a, bar == std::string::npos ? std::string::npos : bar - a));
+                if (bar == std::string::npos) break;
+                a = bar + 1;
+            }
+            int copied = 0;
+            std::string firstRel;
+            for (const std::string& f : files) {
+                fs::path dst = fs::path(root_) / "textures" / fs::path(f).filename();
+                fs::create_directories(dst.parent_path(), ec);
+                if (fs::copy_file(f, dst, fs::copy_options::overwrite_existing, ec)) ++copied;
+                if (firstRel.empty()) firstRel = fs::relative(dst, root_, ec).string();
+            }
             images_.clear();
             scanImages();
+            status_ = "Importadas " + std::to_string(copied) + " imagens";
+            for (const TexSet& t : texSets_)
+                if (t.color == firstRel || t.normal == firstRel || t.rough == firstRel || t.height == firstRel || t.ao == firstRel) {
+                    int maps = 1 + !t.normal.empty() + !t.rough.empty() + !t.height.empty() + !t.ao.empty();
+                    status_ = "Material " + t.name + " importado (" + std::to_string(maps) + " mapas)";
+                }
         } else if (!src.empty()) {
             std::error_code ec;
             fs::path dst = fs::path(root_) / "assets" / fs::path(src).filename();
@@ -1155,13 +1728,82 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
     for (size_t i = 0; i < c.layout.extraDoors.size(); ++i) {
         const DoorPlace& d = c.layout.extraDoors[i];
         bool sel = kind_ == ExtraDoor && idx_ == (int)i;
-        glm::vec3 lo = d.hinge - (d.alongX ? glm::vec3(0, 0, 0.08f) : glm::vec3(0.08f, 0, 0));
-        glm::vec3 hi = d.hinge + (d.alongX ? glm::vec3(d.width, d.height, 0.08f) : glm::vec3(0.08f, d.height, d.width));
-        boxLines(glm::mat4(1.0f), lo, hi, sel ? kSel : kDoorCol, sel ? 2.5f : 1.5f);
+        boxLines(doorFrame(d), glm::vec3(0, 0, -0.08f), glm::vec3(d.width, d.height, 0.08f), sel ? kSel : kDoorCol, sel ? 2.5f : 1.5f);
     }
     if (kind_ == Prop && idx_ < (int)c.propMeshes.size() && c.propMeshes[idx_])
         boxLines(c.props[idx_].model, c.propMeshes[idx_]->boundsMin, c.propMeshes[idx_]->boundsMax, kSel, 2.5f);
     if (kind_ == Box) boxLines(glm::mat4(1.0f), c.world.boxes[idx_].min, c.world.boxes[idx_].max, kSel, 2.5f);
+    // luzes: bolinha da cor da luz; direção (spot, sol, área); selecionada mostra o alcance
+    for (size_t i = 0; i < c.layout.lights.size(); ++i) {
+        const LightPlace& li = c.layout.lights[i];
+        const bool sel = kind_ == Light && idx_ == (int)i;
+        ImVec2 sp;
+        if (!project(li.pos, sp)) continue;
+        glm::vec3 lc = glm::clamp(li.color, 0.0f, 1.0f);
+        ImU32 col = IM_COL32((int)(lc.r * 255), (int)(lc.g * 255), (int)(lc.b * 255), 255);
+        dl->AddCircleFilled(sp, sel ? 9.0f : 7.0f, col);
+        dl->AddCircle(sp, sel ? 13.0f : 10.0f, sel ? kSel : IM_COL32(20, 20, 20, 200), 0, 2.0f);
+        if (li.type == LightPlace::Spot || li.type == LightPlace::Sun || li.type == LightPlace::Area) {
+            ImVec2 tp;
+            if (project(li.pos + li.dir() * (li.type == LightPlace::Sun ? 2.0f : 1.2f), tp)) dl->AddLine(sp, tp, col, 2.5f);
+        }
+        if (sel && li.type != LightPlace::Sun) { // alcance no chão
+            ImVec2 prev;
+            bool havePrev = false;
+            for (int k = 0; k <= 48; ++k) {
+                float an = k * 6.2831853f / 48;
+                glm::vec3 q = li.pos + glm::vec3(std::cos(an), 0.0f, std::sin(an)) * li.range;
+                ImVec2 qs;
+                bool ok = project(q, qs);
+                if (ok && havePrev) dl->AddLine(prev, qs, IM_COL32(255, 210, 90, 140), 1.5f);
+                prev = qs;
+                havePrev = ok;
+            }
+        }
+        const char* tn[] = {"Luz", "Spot", "Ambiente", "Sol", "Área"};
+        dl->AddText(ImVec2(sp.x + 12, sp.y - 8), col, tn[std::clamp(li.type, 0, 4)]);
+    }
+
+    // setas de mover no selecionado (vermelho X, verde Z, azul para cima; quadrado = no chão)
+    if (kind_ != None && !paintMode_ && mode_ == 0) {
+        const glm::vec3 p = selPos(c);
+        const float L = gizmoLen(c);
+        const ImU32 cols[3] = {IM_COL32(230, 60, 70, 255), IM_COL32(70, 120, 235, 255), IM_COL32(110, 200, 60, 255)};
+        const ImU32 hot = IM_COL32(255, 235, 120, 255);
+        const int active = gizmoAxis_ >= 0 ? gizmoAxis_ : gizmoHover_;
+        ImVec2 o;
+        if (project(p, o)) {
+            // quadrado do chão
+            ImVec2 q[4];
+            bool ok = true;
+            const float a0 = 0.25f * L, a1 = 0.55f * L;
+            const glm::vec3 cn[4] = {{a0, 0, a0}, {a1, 0, a0}, {a1, 0, a1}, {a0, 0, a1}};
+            for (int k = 0; k < 4; ++k) ok &= project(p + cn[k], q[k]);
+            if (ok) {
+                dl->AddQuadFilled(q[0], q[1], q[2], q[3], active == 3 ? IM_COL32(255, 235, 120, 150) : IM_COL32(230, 200, 80, 90));
+                dl->AddQuad(q[0], q[1], q[2], q[3], active == 3 ? hot : IM_COL32(230, 200, 80, 220), 1.5f);
+            }
+            for (int k = 0; k < 3; ++k) {
+                ImVec2 tip, b0;
+                if (!project(p + kGizmoAxis[k] * L, tip) || !project(p + kGizmoAxis[k] * L * 0.15f, b0)) continue;
+                ImU32 col = active == k ? hot : cols[k];
+                dl->AddLine(b0, tip, col, active == k ? 4.0f : 3.0f);
+                // ponta de seta
+                glm::vec2 d(tip.x - b0.x, tip.y - b0.y);
+                float len = glm::length(d);
+                if (len > 1.0f) {
+                    d /= len;
+                    glm::vec2 n(-d.y, d.x);
+                    float s = 11.0f;
+                    ImVec2 t2(tip.x + d.x * s, tip.y + d.y * s);
+                    dl->AddTriangleFilled(t2, ImVec2(tip.x + n.x * s * 0.55f, tip.y + n.y * s * 0.55f),
+                                          ImVec2(tip.x - n.x * s * 0.55f, tip.y - n.y * s * 0.55f), col);
+                }
+            }
+            dl->AddCircleFilled(o, 4.5f, IM_COL32(255, 255, 255, 230));
+            dl->AddCircle(o, 8.0f, IM_COL32(255, 255, 255, 200), 0, 1.5f);
+        }
+    }
 
     // anel do pincel no chão
     if (paintMode_ && brushHasHit_) {
@@ -1170,10 +1812,17 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
         bool havePrev = false;
         for (int i = 0; i <= segs; ++i) {
             float a = i * 6.2831853f / segs;
-            glm::vec3 q = brushHit_ + glm::vec3(std::cos(a), 0.0f, std::sin(a)) * brushRadius_;
-            float y;
-            if (c.terrain && c.terrain->heightAt(q.x, q.z, y)) q.y = y;
-            q.y += 0.03f;
+            glm::vec3 q;
+            if (paintTab_ == 3) { // no plano da superfície (parede, teto, chão)
+                glm::vec3 n = brushNormal_;
+                glm::vec3 t = glm::normalize(glm::cross(n, std::fabs(n.y) < 0.95f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+                q = brushHit_ + n * 0.01f + (t * std::cos(a) + glm::cross(n, t) * std::sin(a)) * brushRadius_;
+            } else {
+                q = brushHit_ + glm::vec3(std::cos(a), 0.0f, std::sin(a)) * brushRadius_;
+                float y;
+                if (c.terrain && c.terrain->heightAt(q.x, q.z, y)) q.y = y;
+                q.y += 0.03f;
+            }
             ImVec2 sp;
             bool ok = project(q, sp);
             if (ok && havePrev) dl->AddLine(prev, sp, invert_ ? IM_COL32(255, 90, 80, 230) : IM_COL32(255, 200, 60, 230), 2.0f);
@@ -1224,7 +1873,8 @@ void FreeEditor::saveGround(Context& c) {
         L.paintSize = c.paint->size;
         L.paintRes = c.paint->res;
         L.paintLayers.clear();
-        for (const GroundPaint::Layer& l : c.paint->layers) L.paintLayers.push_back({l.albedo, l.normal, l.tile});
+        for (const GroundPaint::Layer& l : c.paint->layers)
+            L.paintLayers.push_back({l.albedo, l.normal, l.rough, l.height, l.ao, l.normalDX, l.tile, l.kind, l.grass, l.depth});
         c.paint->saveWeights(c.root + "/" + scenePaintFile(c.sceneId));
     } else L.paintOn = false;
     if (c.terrain && c.terrain->active) {
@@ -1254,10 +1904,58 @@ void FreeEditor::ensurePaint(Context& c) {
 
 void FreeEditor::applyBrush(Context& c, float dt) {
     const glm::vec2 p(brushHit_.x, brushHit_.z);
+    if (paintTab_ == 3) { // pintar textura no modelo
+        if (invert_) { // apaga os carimbos dentro do pincel
+            auto& v = c.layout.stains;
+            size_t n0 = v.size();
+            v.erase(std::remove_if(v.begin(), v.end(), [&](const StainPlace& st) { return glm::length(st.pos - brushHit_) < brushRadius_; }),
+                    v.end());
+            if (v.size() != n0) status_ = "Apagado: " + std::to_string(n0 - v.size()) + " carimbos";
+            return;
+        }
+        // arrastando: um carimbo a cada pedaço do tamanho do pincel
+        if (hasLastStamp_ && glm::length(brushHit_ - lastStamp_) < brushRadius_ * stainSpacing_) return;
+        StainPlace st;
+        st.pos = brushHit_;
+        // direção do carimbo: entre a superfície clicada e a câmera (em telha ondulada, friso ou
+        // quina pinta o que se vê, mesmo clicando na lateral de uma onda)
+        st.normal = glm::normalize(brushNormal_ - brushView_);
+        st.size = brushRadius_;
+        st.angle = stainRandomTurn_ ? (float)std::rand() / RAND_MAX * 6.2831853f : 0.0f;
+        st.strength = stainStrength_;
+        st.soft = brushSoft_;
+        st.tex = stainTex_;
+        c.layout.stains.push_back(st);
+        lastStamp_ = brushHit_;
+        hasLastStamp_ = true;
+        status_ = std::to_string(c.layout.stains.size()) + " carimbos no cenário";
+        return;
+    }
     if (paintTab_ == 0) {
         ensurePaint(c);
         if (!c.paint || c.paint->layers.empty()) { status_ = "Adicione uma textura (botão +) para pintar"; return; }
-        c.paint->brush(p, brushRadius_, brushStrength_, brushSoft_, std::min(activeLayer_, (int)c.paint->layers.size() - 1), invert_, dt);
+        const int layer = std::min(activeLayer_, (int)c.paint->layers.size() - 1);
+        const float depth = c.paint->layers[layer].depth;
+        // camada que afunda o chão: guarda o peso antes e mexe no relevo pela diferença
+        std::vector<std::pair<size_t, float>> before;
+        if (depth != 0.0f && c.terrain && c.terrain->active) {
+            const float cell = c.terrain->size / (c.terrain->n - 1);
+            for (int j = 0; j < c.terrain->n; ++j)
+                for (int i = 0; i < c.terrain->n; ++i) {
+                    glm::vec2 q = c.terrain->origin + glm::vec2(i, j) * cell;
+                    if (glm::length(q - p) > brushRadius_ + cell) continue;
+                    before.push_back({(size_t)j * c.terrain->n + i, c.paint->weightAt(q, layer)});
+                }
+        }
+        c.paint->brush(p, brushRadius_, brushStrength_, brushSoft_, layer, invert_, dt);
+        if (!before.empty()) {
+            const float cell = c.terrain->size / (c.terrain->n - 1);
+            for (auto& [k, w0] : before) {
+                glm::vec2 q = c.terrain->origin + glm::vec2((float)(k % c.terrain->n), (float)(k / c.terrain->n)) * cell;
+                c.terrain->h[k] += (c.paint->weightAt(q, layer) - w0) * depth;
+            }
+            c.terrain->upload();
+        }
     } else if (paintTab_ == 1) {
         if (!c.terrain || !c.terrain->active) { status_ = "Crie um terreno primeiro"; return; }
         int tool = terrainTool_;
@@ -1318,9 +2016,13 @@ void FreeEditor::applyBrush(Context& c, float dt) {
 void FreeEditor::drawBrush(Context& c, Result& res, const Rect& r) {
     beginPanel("Pincel", r.x0, r.y0, r.x1, r.y1);
     if (ImGui::BeginTabBar("abas")) {
-        const char* tabs[] = {"Textura", "Relevo", "Folhagem"};
-        for (int i = 0; i < 3; ++i)
-            if (ImGui::BeginTabItem(tabs[i])) { paintTab_ = i; ImGui::EndTabItem(); }
+        const char* tabs[] = {"Textura", "Relevo", "Folhagem", "Pintar textura"};
+        for (int i = 0; i < 4; ++i)
+            if (ImGui::BeginTabItem(tabs[i], nullptr, selectTab_ == i ? ImGuiTabItemFlags_SetSelected : 0)) {
+                paintTab_ = i;
+                ImGui::EndTabItem();
+            }
+        selectTab_ = -1;
         ImGui::EndTabBar();
     }
     ImGui::PushItemWidth(-110.0f);
@@ -1341,7 +2043,25 @@ void FreeEditor::drawBrush(Context& c, Result& res, const Rect& r) {
         return changed;
     };
 
-    if (paintTab_ == 0) { // ---- textura
+    if (paintTab_ == 3) { // ---- pintar textura no modelo (sujeira, manchas, pichação...)
+        ImGui::TextWrapped("Pinta em cima de qualquer modelo ou parede: clique e arraste no lugar. Shift apaga.");
+        ImGui::Text("Imagem:");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", stainTex_.empty() ? "sujeira automática" : stainTex_.c_str());
+        if (imageCombo("##carimbo", stainTex_, true)) {}
+        if (ImGui::Button("Sujeira automática", ImVec2(-1, 0))) stainTex_.clear();
+        ImGui::PushItemWidth(-110.0f);
+        ImGui::SliderFloat("Força", &stainStrength_, 0.05f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Espaçamento", &stainSpacing_, 0.1f, 1.5f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::Checkbox("Girar cada carimbo", &stainRandomTurn_);
+        if (ImGui::Button("Importar imagem (png/jpg)...", ImVec2(-1, 0))) startImport(true);
+        ImGui::TextDisabled("%zu carimbos no cenário", c.layout.stains.size());
+        if (!c.layout.stains.empty() && ImGui::Button("Apagar toda a pintura dos modelos", ImVec2(-1, 0))) {
+            c.layout.stains.clear();
+            dirty_ = true;
+        }
+    } else if (paintTab_ == 0) { // ---- textura
         ImGui::PushItemWidth(-110.0f);
         ImGui::SliderFloat("Força", &brushStrength_, 0.1f, 10.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
         ImGui::PopItemWidth();
@@ -1349,47 +2069,195 @@ void FreeEditor::drawBrush(Context& c, Result& res, const Rect& r) {
         ImGui::Text("Texturas");
         bool reload = false;
         if (c.paint) {
-            for (int i = 0; i < (int)c.paint->layers.size(); ++i) {
-                GroundPaint::Layer& l = c.paint->layers[i];
+            auto removeLayer = [&](int i) { // tira a camada e desloca os pesos das de cima
+                c.paint->layers.erase(c.paint->layers.begin() + i);
+                for (size_t k = 0; k < c.paint->weights.size(); k += 4) {
+                    for (int j = i; j < 3; ++j) c.paint->weights[k + j] = c.paint->weights[k + j + 1];
+                    c.paint->weights[k + 3] = 0;
+                }
+                c.paint->uploadWeights();
+                activeLayer_ = std::max(0, std::min(activeLayer_, (int)c.paint->layers.size() - 1));
+                reload = true;
+                dirty_ = true;
+            };
+            auto setName = [&](const GroundPaint::Layer& l) {
+                if (l.kind == 1) return std::string("Poça d'água");
+                std::string n = l.albedo.empty() ? "(escolha)" : std::filesystem::path(l.albedo).stem().string();
+                for (const TexSet& t : texSets_) if (t.color == l.albedo) n = t.name;
+                return n;
+            };
+            // cards lado a lado: clicar seleciona a camada; o lápis abre a edição; "+" adiciona
+            const float card = 88.0f, gap = ImGui::GetStyle().ItemSpacing.x;
+            const int perRow = std::max(1, (int)((ImGui::GetContentRegionAvail().x + gap) / (card + gap)));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            bool openEdit = false, openNew = false;
+            int col = 0;
+            const int nLayers = (int)c.paint->layers.size();
+            for (int i = 0; i <= nLayers; ++i) {
+                const bool plus = i == nLayers;
+                if (plus && nLayers >= GroundPaint::kMaxLayers) break;
                 ImGui::PushID(i);
-                ImGui::Separator();
-                if (ImGui::RadioButton(("Camada " + std::to_string(i + 1)).c_str(), activeLayer_ == i)) activeLayer_ = i;
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Remover")) {
-                    // tira a camada e desloca os pesos das de cima
-                    c.paint->layers.erase(c.paint->layers.begin() + i);
-                    for (size_t k = 0; k < c.paint->weights.size(); k += 4) {
-                        for (int j = i; j < 3; ++j) c.paint->weights[k + j] = c.paint->weights[k + j + 1];
-                        c.paint->weights[k + 3] = 0;
-                    }
-                    c.paint->uploadWeights();
-                    reload = true;
-                    dirty_ = true;
+                if (col++ % perRow) ImGui::SameLine();
+                ImGui::BeginGroup();
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                ImVec2 p1(p0.x + card, p0.y + card + 20);
+                ImGui::SetNextItemAllowOverlap();
+                bool clicked = ImGui::InvisibleButton("card", ImVec2(card, card + 20));
+                bool hov = ImGui::IsItemHovered();
+                if (plus) {
+                    dl->AddRectFilled(p0, p1, hov ? IM_COL32(60, 60, 66, 255) : IM_COL32(40, 40, 44, 255), 6.0f);
+                    dl->AddRect(p0, p1, IM_COL32(110, 110, 120, 255), 6.0f, 0, 1.5f);
+                    ImVec2 cc(p0.x + card * 0.5f, p0.y + card * 0.45f);
+                    dl->AddLine(ImVec2(cc.x - 14, cc.y), ImVec2(cc.x + 14, cc.y), IM_COL32(220, 220, 220, 255), 3.0f);
+                    dl->AddLine(ImVec2(cc.x, cc.y - 14), ImVec2(cc.x, cc.y + 14), IM_COL32(220, 220, 220, 255), 3.0f);
+                    dl->AddText(ImVec2(p0.x + 8, p0.y + card + 1), IM_COL32(200, 200, 200, 255), "Adicionar");
+                    if (clicked) openNew = true;
+                    ImGui::EndGroup();
                     ImGui::PopID();
                     break;
                 }
-                ImGui::TextDisabled("Cor (albedo)");
-                reload |= imageCombo("##alb", l.albedo, false);
-                ImGui::TextDisabled("Normal map");
-                reload |= imageCombo("##nrm", l.normal, true);
-                ImGui::SetNextItemWidth(-110.0f);
-                ImGui::SliderFloat("Repetir a cada (m)", &l.tile, 0.2f, 20.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
-                if (ImGui::IsItemDeactivatedAfterEdit()) dirty_ = true;
+                GroundPaint::Layer& l = c.paint->layers[i];
+                const bool sel = activeLayer_ == i;
+                if (clicked) activeLayer_ = i;
+                dl->AddRectFilled(p0, p1, sel ? IM_COL32(70, 55, 30, 255) : hov ? IM_COL32(55, 55, 60, 255) : IM_COL32(38, 38, 42, 255), 6.0f);
+                ImVec2 i0(p0.x + 4, p0.y + 4), i1(p0.x + card - 4, p0.y + card - 4);
+                if (l.kind == 1) {
+                    dl->AddRectFilled(i0, i1, IM_COL32(40, 70, 95, 255), 4.0f);
+                    dl->AddCircleFilled(ImVec2((i0.x + i1.x) * 0.5f, (i0.y + i1.y) * 0.5f + 4), 22.0f, IM_COL32(120, 170, 210, 255));
+                } else if (unsigned th = l.albedo.empty() ? 0 : thumb(l.albedo))
+                    dl->AddImageRounded((ImTextureID)(intptr_t)th, i0, i1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
+                else
+                    dl->AddRectFilled(i0, i1, IM_COL32(90, 90, 90, 255), 4.0f);
+                std::string nm = setName(l);
+                while (nm.size() > 3 && ImGui::CalcTextSize(nm.c_str()).x > card - 8) nm = nm.substr(0, nm.size() - 3) + "..";
+                dl->AddText(ImVec2(p0.x + 4, p0.y + card + 1), sel ? IM_COL32(255, 200, 120, 255) : IM_COL32(220, 220, 220, 255), nm.c_str());
+                if (sel) dl->AddRect(p0, p1, IM_COL32(240, 160, 40, 255), 6.0f, 0, 3.0f);
+                // lápis no canto: abre a edição dessa camada
+                ImVec2 e0(p0.x + card - 28, p0.y + 6);
+                ImGui::SetCursorScreenPos(e0);
+                bool edit = ImGui::InvisibleButton("lapis", ImVec2(22, 22));
+                bool ehov = ImGui::IsItemHovered();
+                dl->AddRectFilled(e0, ImVec2(e0.x + 22, e0.y + 22), ehov ? IM_COL32(240, 160, 40, 255) : IM_COL32(20, 20, 22, 210), 4.0f);
+                // lápis desenhado: corpo inclinado + ponta
+                ImVec2 a0(e0.x + 6, e0.y + 16), a1(e0.x + 16, e0.y + 6);
+                dl->AddLine(a0, a1, IM_COL32(240, 240, 240, 255), 3.0f);
+                dl->AddTriangleFilled(ImVec2(e0.x + 4, e0.y + 18), ImVec2(e0.x + 5, e0.y + 14), ImVec2(e0.x + 8, e0.y + 17), IM_COL32(240, 240, 240, 255));
+                if (ehov) ImGui::SetTooltip("Editar textura");
+                if (edit) { editLayer_ = i; activeLayer_ = i; openEdit = true; }
+                ImGui::SetCursorScreenPos(p0); // o grupo ocupa só o card
+                ImGui::Dummy(ImVec2(card, card + 20));
+                ImGui::EndGroup();
                 ImGui::PopID();
             }
-            ImGui::Separator();
-            if ((int)c.paint->layers.size() < GroundPaint::kMaxLayers) {
-                if (ImGui::Button("+ Adicionar textura", ImVec2(-1, 0))) {
+            if (const char* el = getenv("GA_EDITLAYER")) { // depuração: abre a edição dessa camada
+                static bool once = false;
+                if (!once) { once = true; editLayer_ = std::atoi(el); openEdit = true; }
+            }
+            if (openNew) ImGui::OpenPopup("nova_camada");
+            if (openEdit) ImGui::OpenPopup("Editar textura");
+            if (ImGui::BeginPopup("nova_camada")) {
+                if (ImGui::Selectable("Textura (material)")) {
                     ensurePaint(c);
                     GroundPaint::Layer l;
-                    if (!images_.empty()) l.albedo = images_[0];
+                    if (!texSets_.empty()) {
+                        const TexSet& t = texSets_[0];
+                        l.albedo = t.color; l.normal = t.normal; l.normalDX = t.dx; l.rough = t.rough; l.height = t.height; l.ao = t.ao;
+                    } else if (!images_.empty()) l.albedo = images_[0];
+                    c.paint->layers.push_back(l);
+                    activeLayer_ = editLayer_ = (int)c.paint->layers.size() - 1;
+                    reload = true;
+                    dirty_ = true;
+                    openEdit = true;
+                }
+                bool hasWater = false;
+                for (const GroundPaint::Layer& q : c.paint->layers) hasWater |= q.kind == 1;
+                if (!hasWater && ImGui::Selectable("Poça d'água")) {
+                    ensurePaint(c);
+                    GroundPaint::Layer l;
+                    l.kind = 1;
                     c.paint->layers.push_back(l);
                     activeLayer_ = (int)c.paint->layers.size() - 1;
                     reload = true;
                     dirty_ = true;
                 }
-            } else ImGui::TextDisabled("Máximo de 4 texturas por cenário");
-            if (ImGui::Button("Importar textura (png/jpg)...", ImVec2(-1, 0))) startImport(true);
+                ImGui::EndPopup();
+            }
+            if (openEdit && !ImGui::IsPopupOpen("Editar textura")) ImGui::OpenPopup("Editar textura");
+            // janela de edição da camada
+            ImGui::SetNextWindowSize(ImVec2(470, 0), ImGuiCond_Appearing);
+            bool keep = true;
+            if (ImGui::BeginPopupModal("Editar textura", &keep)) {
+                if (editLayer_ < 0 || editLayer_ >= (int)c.paint->layers.size()) ImGui::CloseCurrentPopup();
+                else {
+                    GroundPaint::Layer& l = c.paint->layers[editLayer_];
+                    ImGui::TextColored(kAccentV, "Camada %d: %s", editLayer_ + 1, setName(l).c_str());
+                    ImGui::Separator();
+                    if (l.kind == 1) {
+                        ImGui::TextWrapped("Poça d'água: pinte por cima do chão; a água junta nas partes baixas e mexe com passos e tiros.");
+                    } else {
+                        ImGui::TextUnformatted("Material");
+                        ImGui::BeginChild("materiais", ImVec2(0, 250), true);
+                        int mc = 0;
+                        const int per = std::max(1, (int)((ImGui::GetContentRegionAvail().x + gap) / (84 + gap)));
+                        for (size_t si = 0; si < texSets_.size(); ++si) {
+                            const TexSet& t = texSets_[si];
+                            ImGui::PushID((int)si + 5000);
+                            if (mc++ % per) ImGui::SameLine();
+                            ImGui::BeginGroup();
+                            bool cur = l.albedo == t.color;
+                            if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.95f, 0.62f, 0.16f, 1.0f));
+                            if (ImGui::ImageButton("##m", (ImTextureID)(intptr_t)thumb(t.color), ImVec2(72, 72))) {
+                                l.albedo = t.color; l.normal = t.normal; l.normalDX = t.dx; l.rough = t.rough; l.height = t.height; l.ao = t.ao;
+                                reload = true;
+                            }
+                            if (cur) ImGui::PopStyleColor();
+                            std::string nm = t.name;
+                            while (nm.size() > 3 && ImGui::CalcTextSize(nm.c_str()).x > 80) nm = nm.substr(0, nm.size() - 3) + "..";
+                            ImGui::TextUnformatted(nm.c_str());
+                            ImGui::EndGroup();
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.name.c_str());
+                            ImGui::PopID();
+                        }
+                        if (texSets_.empty()) ImGui::TextDisabled("Nenhuma textura em textures/.");
+                        ImGui::EndChild();
+                        if (ImGui::Button("Importar textura (todos os mapas)...")) startImport(true);
+                        ImGui::Separator();
+                        ImGui::PushItemWidth(-150.0f);
+                        ImGui::SliderFloat("Repetir a cada (m)", &l.tile, 0.2f, 20.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) dirty_ = true;
+                        float cm = -l.depth * 100.0f + 0.0f; // sem "-0"
+                        if (ImGui::SliderFloat("Afundar (cm)", &cm, 0.0f, 20.0f, "%.0f")) l.depth = -cm / 100.0f;
+                        if (ImGui::IsItemDeactivatedAfterEdit()) dirty_ = true;
+                        ImGui::PopItemWidth();
+                        if (ImGui::Checkbox("Grama 3D (folhas de verdade)", &l.grass)) dirty_ = true;
+                        if (ImGui::TreeNode("Avançado (cada mapa)")) {
+                            ImGui::TextDisabled("Cor (albedo)");
+                            reload |= imageCombo("##alb", l.albedo, false);
+                            ImGui::TextDisabled("Normal");
+                            reload |= imageCombo("##nrm", l.normal, true);
+                            reload |= ImGui::Checkbox("Normal DirectX (verde invertido)", &l.normalDX);
+                            ImGui::TextDisabled("Rugosidade");
+                            reload |= imageCombo("##rgh", l.rough, true);
+                            ImGui::TextDisabled("Relevo (displacement/altura)");
+                            reload |= imageCombo("##hgt", l.height, true);
+                            ImGui::TextDisabled("Oclusão (AO)");
+                            reload |= imageCombo("##ao", l.ao, true);
+                            ImGui::TreePop();
+                        }
+                    }
+                    ImGui::Separator();
+                    if (ImGui::Button("Remover camada")) {
+                        removeLayer(editLayer_);
+                        editLayer_ = -1;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Fechar")) ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Importar textura (todos os mapas)...", ImVec2(-1, 0))) startImport(true);
             if (reload) { ensurePaint(c); c.paint->uploadLayers(c.root); dirty_ = true; }
             if (c.paint->active && ImGui::Button("Apagar toda a pintura", ImVec2(-1, 0))) {
                 std::fill(c.paint->weights.begin(), c.paint->weights.end(), 0);

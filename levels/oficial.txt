@@ -1,6 +1,11 @@
 # Cenario (editor livre). Angulos em graus.
 prop mapa 0 0 0 0 1
-door -0.45 0 -11.63 0.9 2.1
-spawn -1.5 0 -14.5 27.5937
-spawn 1.6 0 -17 -16.5915
+nodoor
+nospawns
+nodoors
+paint -150 -150 300 512
+layer 3 textures/Ground003_2K-JPG_Color.jpg|textures/Ground003_2K-JPG_NormalGL.jpg|textures/Ground003_2K-JPG_Roughness.jpg|textures/Ground003_2K-JPG_Displacement.jpg|||||0
+layer 3 ||||||agua||0
+layer 2 textures/Metal055C_1K-JPG_Color.jpg|textures/Metal055C_1K-JPG_NormalGL.jpg|textures/Metal055C_1K-JPG_Roughness.jpg|textures/Metal055C_1K-JPG_Displacement.jpg|||||0
+terrain -60 -60 120 241
 start 0 0 0 180

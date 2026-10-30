@@ -35,7 +35,13 @@ public:
         // > 0: divide a malha em blocos de chunkSize metros (xz) para desenhar só o que aparece
         // (mapas grandes). Cada bloco tem sua caixa.
         float chunkSize = 0.0f;
+        // >= 0: só essa parte do arquivo (ver listParts), na posição que ela tem dentro dele
+        int part = -1;
     };
+    // Objetos separados dentro de um arquivo (ex.: casa com portas, janelas e móveis num GLB só).
+    // Desce pelos nós que só embrulham (Sketchfab_model, root...) até onde o arquivo se divide;
+    // cada filho dali é uma parte. Retorna os nomes (vazio se o arquivo tem um objeto só).
+    static std::vector<std::string> listParts(const std::string& path);
     // sk == nullptr: objeto rígido (ex.: a arma), desenhado com uBones[0] = identidade,
     // ou modelo com rig próprio (opt.boneMap).
     bool load(const std::string& path, const Skeleton* sk, const LoadOptions& opt);

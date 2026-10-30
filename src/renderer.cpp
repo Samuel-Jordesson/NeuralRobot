@@ -1,6 +1,8 @@
 #include "renderer.h"
 #include "terrain.h"
 
+#include <stb_image.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
@@ -149,7 +151,7 @@ GpuProfiler g_prof;
 
 // unidades de textura fixas usadas pela iluminação
 enum TexUnit { kUnitIrradiance = 4, kUnitEnv = 5, kUnitAO = 6, kUnitShadow = 7, kUnitSkyCube = 8, kUnitNoise = 9,
-               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12, kUnitRoof = 13 };
+               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12, kUnitRoof = 13, kUnitPaintM = 14 };
 
 // Textura de ruído que repete sem emenda (256x256), lida pelos shaders no lugar de ruído procedural:
 // R = fbm grande (4 células), G = ruído médio (32), B = ruído fino (128), A = fbm (8 células).
@@ -223,11 +225,11 @@ bool Renderer::init(const std::string& dir, int width, int height) {
               ld(bloomDown_, "fullscreen.vert", "bloom_down.frag") && ld(bloomUp_, "fullscreen.vert", "bloom_up.frag") &&
               ld(lum_, "fullscreen.vert", "luminance.frag") && ld(adapt_, "fullscreen.vert", "adapt.frag") &&
               ld(post_, "fullscreen.vert", "post.frag") && ld(fxaa_, "fullscreen.vert", "fxaa.frag") &&
-              ld(fx_, "fx.vert", "fx.frag") && ld(decal_, "fx.vert", "decal.frag") && ld(hud_, "hud.vert", "hud.frag");
+              ld(fx_, "fx.vert", "fx.frag") && ld(decal_, "fx.vert", "decal.frag") && ld(stain_, "static.vert", "stain.frag") && ld(grass_, "grass.vert", "grass.frag") && ld(glass_, "static.vert", "glass.frag") && ld(hud_, "hud.vert", "hud.frag");
     if (!ok) return false;
 
     // samplers da iluminação sempre nas mesmas unidades (tipos diferentes não podem dividir unidade)
-    for (Shader* sh : {&skinned_, &world_, &sky_, &volumetric_, &fogComp_}) {
+    for (Shader* sh : {&skinned_, &world_, &sky_, &volumetric_, &fogComp_, &grass_, &glass_}) {
         sh->use();
         sh->set("uIrradiance", (int)kUnitIrradiance);
         sh->set("uEnvMap", (int)kUnitEnv);
@@ -238,6 +240,7 @@ bool Renderer::init(const std::string& dir, int width, int height) {
         sh->set("uPaintWeights", (int)kUnitPaintW);
         sh->set("uPaintAlbedo", (int)kUnitPaintA);
         sh->set("uPaintNormal", (int)kUnitPaintN);
+        sh->set("uPaintMask", (int)kUnitPaintM);
         sh->set("uPaintOn", 0);
         sh->set("uRoofMap", (int)kUnitRoof);
         sh->set("uRoofOn", 0);
@@ -555,6 +558,11 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
     sh.set("uRenderSize", glm::vec2((float)rw_, (float)rh_));
     // lado de dentro (mapa de teto) e luzes do editor
     sh.set("uRoofOn", roofTex_ && roofVersion_ > 0 ? 1 : 0);
+    {
+        const int n = std::min(16, (int)s.ripples.size());
+        sh.set("uRippleCount", n);
+        if (n) glUniform4fv(glGetUniformLocation(sh.id(), "uRipples"), n, &s.ripples[s.ripples.size() - n].x);
+    }
     sh.set("uRoofRect", roofRect_);
     {
         const int kMax = 16;
@@ -646,27 +654,130 @@ void Renderer::updateRoof(const World& w) {
     roofRect_ = glm::vec4(w.roof.origin.x, w.roof.origin.y, 1.0f / sx, 1.0f / sz);
 }
 
+GLuint Renderer::stainTexture(const std::string& path) {
+    auto it = stainTex_.find(path);
+    if (it != stainTex_.end()) return it->second;
+    GLuint t = 0;
+    int w, h, c;
+    if (unsigned char* px = stbi_load(path.c_str(), &w, &h, &c, 4)) {
+        t = makeTexture2D(px, w, h, true);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        stbi_image_free(px);
+    } else
+        std::fprintf(stderr, "[pintura] não abriu %s\n", path.c_str());
+    stainTex_[path] = t;
+    return t;
+}
+
+// Grama 3D nas camadas de pintura marcadas como grama: folhas em volta da câmera, no relevo.
+void Renderer::drawGrass(const RenderScene& s) {
+    if (!s.paint || !s.paint->active || !s.paint->weightTex) return;
+    glm::vec4 grassCh(0.0f), waterCh(0.0f);
+    bool any = false;
+    for (int i = 0; i < (int)s.paint->layers.size() && i < 4; ++i) {
+        if (s.paint->layers[i].grass) { grassCh[i] = 1.0f; any = true; }
+        if (s.paint->layers[i].kind == 1) waterCh[i] = 1.0f;
+    }
+    if (!any) return;
+    const float spacing = 0.07f, radius = 13.0f;
+    const int side = (int)std::ceil(radius * 2.0f / spacing) | 1;
+    grass_.use();
+    grass_.set("uViewProj", s.proj * s.view);
+    setLightingUniforms(grass_, s);
+    grass_.set("uPaintRect", glm::vec4(s.paint->origin.x, s.paint->origin.y, 1.0f / s.paint->size, 0.0f));
+    grass_.set("uGrassChan", grassCh);
+    grass_.set("uWaterChan", waterCh);
+    grass_.set("uGroundY", s.world ? s.world->groundY : 0.0f);
+    grass_.set("uSide", side);
+    grass_.set("uSpacing", spacing);
+    grass_.set("uRadius", radius);
+    const bool terr = s.terrain && s.terrain->active && s.terrain->heightTex;
+    grass_.set("uTerrainRect", terr ? glm::vec4(s.terrain->origin.x, s.terrain->origin.y, s.terrain->size, 1.0f) : glm::vec4(0.0f));
+    grass_.set("uTerrainH", 15);
+    glActiveTexture(GL_TEXTURE0 + kUnitPaintW);
+    glBindTexture(GL_TEXTURE_2D, s.paint->weightTex);
+    glActiveTexture(GL_TEXTURE0 + 15);
+    glBindTexture(GL_TEXTURE_2D, terr ? s.terrain->heightTex : 0);
+    glActiveTexture(GL_TEXTURE0);
+    glDisable(GL_CULL_FACE);
+    glBindVertexArray(emptyVao_);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, side * side);
+}
+
+// Pintura nos modelos: decalques projetados (caixa do carimbo sobre a profundidade do pré-passo).
+void Renderer::drawStains(const RenderScene& s) {
+    if (s.stains.empty()) return;
+    const glm::mat4 vp = s.proj * s.view;
+    glDisable(GL_DEPTH_TEST); // a profundidade vem do pré-passo (funciona com a câmera dentro da caixa)
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT); // faces de trás: cada pixel uma vez, mesmo de dentro
+    stain_.use();
+    stain_.set("uViewProj", vp);
+    stain_.set("uInvViewProj", glm::inverse(vp));
+    stain_.set("uScreen", glm::vec2((float)rw_, (float)rh_));
+    stain_.set("uStainTex", 0);
+    stain_.set("uNoise", (int)kUnitNoise);
+    stain_.set("uDepth", 1); // unidades de material (livres neste passo)
+    stain_.set("uNormalTex", 2);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(GL_TEXTURE_2D, preDepth_);
+    glActiveTexture(GL_TEXTURE0 + 2);
+    glBindTexture(GL_TEXTURE_2D, preNormal_);
+    glActiveTexture(GL_TEXTURE0);
+    for (size_t i = 0; i < s.stains.size(); ++i) {
+        const RenderScene::Stain& st = s.stains[i];
+        glm::vec3 n = glm::normalize(st.normal);
+        glm::vec3 t = glm::normalize(glm::cross(n, std::fabs(n.y) < 0.95f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+        glm::vec3 b = glm::cross(n, t);
+        glm::vec3 ax = t * std::cos(st.angle) + b * std::sin(st.angle), ay = glm::cross(n, ax);
+        // espessura: pega o relevo (telha ondulada, tijolo) sem atravessar para o outro lado da parede
+        const float depth = std::clamp(st.size * 0.8f, 0.25f, 1.2f);
+        glm::mat4 model(glm::vec4(ax * st.size * 2.0f, 0.0f), glm::vec4(ay * st.size * 2.0f, 0.0f), glm::vec4(n * depth, 0.0f),
+                        glm::vec4(st.pos, 1.0f));
+        GLuint tex = st.image.empty() ? 0 : stainTexture(st.image);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        stain_.set("uModel", model);
+        stain_.set("uInvModel", glm::inverse(model));
+        stain_.set("uStainNormal", n);
+        stain_.set("uHasTex", tex ? 1 : 0);
+        stain_.set("uStrength", st.strength);
+        stain_.set("uSoft", st.soft);
+        stain_.set("uSeed", std::fmod(i * 0.137f, 1.0f));
+        cube_.draw();
+    }
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 // Vidro das portas: transparente, por cima da cena opaca (testa profundidade, não escreve).
 void Renderer::drawGlass(const RenderScene& s) {
     bool any = false;
     for (const RenderScene::Panel& p : s.panels) any |= p.material == 6;
     if (!any) return;
-    world_.use();
-    world_.set("uViewProj", s.proj * s.view);
-    setLightingUniforms(world_, s);
-    world_.set("uPaintOn", 0);
-    world_.set("uMaterial", 6);
+    glass_.use();
+    glass_.set("uViewProj", s.proj * s.view);
+    setLightingUniforms(glass_, s);
+    glass_.set("uPaintOn", 0);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_ONE, GL_SRC1_COLOR); // reflexo + fundo tingido pela cor do vidro
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
     for (const RenderScene::Panel& p : s.panels) {
         if (p.material != 6) continue;
-        world_.set("uModel", p.model);
-        world_.set("uColor", p.color);
+        glass_.set("uModel", p.model);
+        glass_.set("uColor", p.color);
         cube_.draw();
     }
     glDepthMask(GL_TRUE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
 }
 
@@ -699,8 +810,15 @@ void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
         if (p.material == 6) continue; // vidro: passo transparente (drawGlass)
         sh.set("uModel", p.model);
         if (color) {
-            sh.set("uMaterial", p.material);
-            sh.set("uColor", p.color);
+            GLuint tex = p.material == 7 ? stainTexture(p.image) : 0;
+            sh.set("uMaterial", p.material == 7 && !tex ? 4 : p.material); // imagem não abriu: madeira
+            sh.set("uColor", p.material == 7 && !tex ? glm::vec3(0.42f, 0.24f, 0.12f) : p.color);
+            if (tex) {
+                sh.set("uPanelTex", 1);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glActiveTexture(GL_TEXTURE0);
+            }
         }
         cube_.draw();
     }
@@ -784,6 +902,8 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         glBindTexture(GL_TEXTURE_2D_ARRAY, s.paint->albedoArr);
         glActiveTexture(GL_TEXTURE0 + kUnitPaintN);
         glBindTexture(GL_TEXTURE_2D_ARRAY, s.paint->normalArr);
+        glActiveTexture(GL_TEXTURE0 + kUnitPaintM);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s.paint->maskArr);
         glActiveTexture(GL_TEXTURE0);
     }
     auto paintUniforms = [&](Shader& sh) {
@@ -794,6 +914,9 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         glm::vec4 tile(2.0f);
         for (int i = 0; i < (int)p.layers.size() && i < 4; ++i) tile[i] = p.layers[i].tile;
         sh.set("uPaintTile", tile);
+        glm::vec4 water(0.0f);
+        for (int i = 0; i < (int)p.layers.size() && i < 4; ++i) water[i] = p.layers[i].kind == 1 ? 1.0f : 0.0f;
+        sh.set("uPaintWater", water);
         sh.set("uPaintCount", (int)std::min<size_t>(p.layers.size(), 4));
     };
     worldSh.use();
@@ -1043,6 +1166,7 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     drawScene(world_, skinned_, s, Pass::Color, vp);
+    drawGrass(s);
 
     g_prof.mark("cena");
     // céu só onde não há geometria
@@ -1057,7 +1181,8 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     fullscreen();
     glDepthMask(GL_TRUE);
 
-    // vidro (portas) e efeitos transparentes por cima de tudo (testam profundidade, não escrevem)
+    // pintura nos modelos, vidro (portas) e efeitos transparentes (testam profundidade, não escrevem)
+    drawStains(s);
     drawGlass(s);
     drawEffects(s);
     glDepthFunc(GL_LESS);

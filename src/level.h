@@ -46,16 +46,29 @@ struct DoorPlace {
     float yaw = 0.0f;    // rad, qualquer ângulo: 0 = folha ao longo de +X, -90° = ao longo de +Z
     bool mirror = false; // dobradiça no fim do vão (segunda folha de uma porta dupla)
     bool glass = false;  // porta de vidro (moldura de alumínio)
+    glm::vec3 glassColor{0.75f, 0.85f, 0.85f}; // cor do vidro
+    std::string texture; // porta comum: imagem na folha (relativa à raiz); vazio = madeira
     glm::vec3 axis() const { return {std::cos(yaw), 0.0f, -std::sin(yaw)}; }
     glm::vec3 end() const { return hinge + axis() * width; }
     // Ao longo de X ou Z: o vão pode ser recortado na parede da malha.
     bool axisAligned() const { return std::fabs(std::sin(2.0f * yaw)) < 0.03f; }
 };
 
-// Luz posta pelo editor. Pontual (para todo lado), spot (cone) ou ambiente (clareia por igual
-// tudo dentro do raio, sem direção: bom para salas escuras).
+// Pintura no modelo (editor): carimbo de uma imagem colado na superfície (sujeira, mancha...).
+struct StainPlace {
+    glm::vec3 pos{0.0f}, normal{0.0f, 1.0f, 0.0f};
+    float size = 0.5f;     // raio (m)
+    float angle = 0.0f;    // giro do carimbo em volta da normal (rad)
+    float strength = 0.7f; // 0..1
+    float soft = 0.6f;     // borda suave
+    std::string tex;       // imagem (relativa à raiz); vazio = sujeira automática
+};
+
+// Luz posta pelo editor (os tipos do Blender + ambiente): pontual (para todo lado), spot (cone),
+// ambiente (clareia por igual tudo dentro do raio, sem direção: bom para salas escuras), sol
+// (direcional, vale para o cenário todo) e área (painel que ilumina para a frente).
 struct LightPlace {
-    enum Type { Point = 0, Spot = 1, Ambient = 2 };
+    enum Type { Point = 0, Spot = 1, Ambient = 2, Sun = 3, Area = 4 };
     int type = Point;
     glm::vec3 pos{0.0f};
     float yaw = 0.0f, pitch = -1.5707963f; // direção do spot (rad); -90° = para baixo
@@ -63,6 +76,7 @@ struct LightPlace {
     float intensity = 6.0f; // brilho
     float range = 8.0f;     // alcance (m)
     float inner = 25.0f, outer = 40.0f; // spot: cone (graus, metade da abertura)
+    float size = 1.0f;      // área: lado do painel (m)
     glm::vec3 dir() const { return {std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw)}; }
 };
 
@@ -75,14 +89,19 @@ struct LevelLayout {
     std::vector<DoorPlace> extraDoors;                        // outras portas (só no arquivo/painel)
     std::vector<DoorPlace> allDoors() const;                  // a principal (se houver) + as outras
     std::vector<LightPlace> lights;                           // luzes postas pelo editor
+    std::vector<StainPlace> stains;                           // pintura nos modelos (sujeira, manchas)
     std::vector<glm::vec3> spawns;                            // inimigos
     std::vector<float> spawnYaw;
     std::map<int, std::pair<glm::vec3, float>> guns;          // arma i posta no chão pelo editor (posição, giro)
     // pintura do chão e relevo (editor): os pesos e as alturas ficam em levels/<cenário>_pintura.png
     // e levels/<cenário>_relevo.bin
     struct PaintLayer {
-        std::string albedo, normal;
+        std::string albedo, normal, rough, height, ao; // mapas do material ("" = não tem)
+        bool normalDX = false;
         float tile = 2.0f;
+        int kind = 0;       // 0 material, 1 poça d'água
+        bool grass = false; // grama 3D
+        float depth = 0.0f; // afunda o terreno (m)
     };
     bool paintOn = false;
     glm::vec2 paintOrigin{0.0f};
@@ -117,7 +136,7 @@ struct AssetLibrary {
     enum Collision { None = 0, Solid = 1, Physics = 2 }; // atravessa / parado e sólido / cai e é empurrado
     std::map<std::string, int> collision;
     int collisionOf(const std::string& rel) const {
-        auto it = collision.find(rel);
+        auto it = collision.find(rel.substr(0, rel.rfind('#'))); // parte de um arquivo: vale a do arquivo
         return it == collision.end() ? Solid : it->second;
     }
     void loadConfig();

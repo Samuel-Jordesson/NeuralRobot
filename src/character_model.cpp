@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <thread>
@@ -220,8 +221,8 @@ void predecode(const aiScene* sc, const std::vector<int>& matIds, int maxSize, s
                 todo.push_back({tex, path.C_Str()});
             }
         }
-    if (todo.size() < 2) {
-        out.clear();
+    if (todo.size() < 2) { // uma textura só: decodifica na hora, sem threads
+        for (auto& t : todo) out.erase(t.first);
         return;
     }
     std::vector<Image> imgs(todo.size());
@@ -235,9 +236,10 @@ void predecode(const aiScene* sc, const std::vector<int>& matIds, int maxSize, s
     for (unsigned k = 1; k < n; ++k) th.emplace_back(work);
     work();
     for (std::thread& t : th) t.join();
-    out.clear();
-    for (size_t i = 0; i < todo.size(); ++i)
+    for (size_t i = 0; i < todo.size(); ++i) {
         if (ok[i]) out[todo[i].first] = std::move(imgs[i]);
+        else out.erase(todo[i].first);
+    }
 }
 
 bool decodeEmbedded(const aiScene* sc, const aiMaterial* m, std::initializer_list<aiTextureType> types, int maxSize,
@@ -407,6 +409,42 @@ void cutHoles(std::vector<Vertex>& verts, std::vector<unsigned>& idx, std::vecto
 using BoneWeights = std::vector<std::map<int, float>>;
 
 // Junta todas as malhas aplicando as transformações da hierarquia de nós.
+// Arquivo aberto por último para carregar partes (cada parte é um modelo, o arquivo é lido uma vez).
+struct OpenFile {
+    std::string path;
+    int maxTex = -1;
+    std::unique_ptr<Assimp::Importer> imp;
+    std::map<const aiTexture*, Image> decoded;
+};
+OpenFile& openFile() {
+    static OpenFile f;
+    return f;
+}
+
+bool hasMeshes(const aiNode* n) {
+    if (n->mNumMeshes) return true;
+    for (unsigned c = 0; c < n->mNumChildren; ++c)
+        if (hasMeshes(n->mChildren[c])) return true;
+    return false;
+}
+
+// Desce pelos nós sem malha com um filho só (embrulhos do exportador); 'xf' acumula a transformação
+// até o nó onde o arquivo se divide (sem a dele: ela entra no collectMeshes de cada filho).
+const aiNode* splitNode(const aiNode* n, glm::mat4& xf) {
+    xf = glm::mat4(1.0f);
+    for (;;) {
+        int withMesh = 0;
+        const aiNode* only = nullptr;
+        for (unsigned c = 0; c < n->mNumChildren; ++c)
+            if (hasMeshes(n->mChildren[c])) { ++withMesh; only = n->mChildren[c]; }
+        if (n->mNumMeshes || withMesh != 1) break;
+        xf = xf * toGlm(n->mTransformation);
+        n = only;
+    }
+    xf = xf * toGlm(n->mTransformation);
+    return n;
+}
+
 void collectMeshes(const aiScene* sc, const aiNode* node, const glm::mat4& parentXf, bool fixSkinnedAxes,
                    std::vector<Vertex>& verts, std::vector<unsigned>& idx, std::vector<int>& triMat,
                    const CharacterModel::LoadOptions& opt, BoneWeights& weights) {
@@ -579,12 +617,29 @@ bool outsideFrustum(const glm::mat4& mvp, const glm::vec3& lo, const glm::vec3& 
 } // namespace
 
 bool CharacterModel::load(const std::string& path, const Skeleton* sk, const LoadOptions& opt) {
-    Assimp::Importer imp;
     // FlipUVs desfaz a inversão que o importador glTF do Assimp aplica -> UVs no padrão glTF.
-    const aiScene* sc = imp.ReadFile(path, aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
-                                               aiProcess_GenSmoothNormals | aiProcess_FlipUVs);
+    const unsigned flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_GenSmoothNormals | aiProcess_FlipUVs;
+    Assimp::Importer local;
+    Assimp::Importer* imp = &local;
+    OpenFile& of = openFile();
+    if (opt.part >= 0) { // partes do mesmo arquivo: lê uma vez só e guarda as texturas já abertas
+        if (of.path != path || of.maxTex != opt.maxTextureSize || !of.imp) {
+            of = OpenFile();
+            of.imp = std::make_unique<Assimp::Importer>();
+            if (!of.imp->ReadFile(path, flags)) {
+                std::fprintf(stderr, "[modelo] falha ao carregar %s: %s\n", path.c_str(), of.imp->GetErrorString());
+                of = OpenFile();
+                return false;
+            }
+            of.path = path;
+            of.maxTex = opt.maxTextureSize;
+        }
+        imp = of.imp.get();
+    } else
+        local.ReadFile(path, flags);
+    const aiScene* sc = imp->GetScene();
     if (!sc || !sc->mNumMeshes) {
-        std::fprintf(stderr, "[modelo] falha ao carregar %s: %s\n", path.c_str(), imp.GetErrorString());
+        std::fprintf(stderr, "[modelo] falha ao carregar %s: %s\n", path.c_str(), imp->GetErrorString());
         return false;
     }
 
@@ -592,7 +647,17 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
     std::vector<unsigned> idx;
     std::vector<int> triMat; // material de cada triângulo
     BoneWeights weights;
-    collectMeshes(sc, sc->mRootNode, glm::mat4(1.0f), opt.fixSkinnedAxes, verts, idx, triMat, opt, weights);
+    if (opt.part >= 0) { // só uma parte do arquivo, com a transformação dos nós de cima
+        glm::mat4 xf(1.0f);
+        const aiNode* split = splitNode(sc->mRootNode, xf);
+        if (opt.part >= (int)split->mNumChildren) {
+            std::fprintf(stderr, "[modelo] %s não tem a parte %d\n", path.c_str(), opt.part);
+            return false;
+        }
+        collectMeshes(sc, split->mChildren[opt.part], xf, opt.fixSkinnedAxes, verts, idx, triMat, opt, weights);
+        if (verts.empty()) return false;
+    } else
+        collectMeshes(sc, sc->mRootNode, glm::mat4(1.0f), opt.fixSkinnedAxes, verts, idx, triMat, opt, weights);
 
     float minY = 1e9f, maxY = -1e9f;
     for (const Vertex& v : verts) { minY = std::min(minY, v.pos[1]); maxY = std::max(maxY, v.pos[1]); }
@@ -677,7 +742,8 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
         idx = organize(verts, idx, triMat, matIds, chunkSize_, parts, chunks);
         if (!chunks.empty()) std::printf("[modelo] %zu blocos de %.0f m\n", chunks.size(), chunkSize_);
         matIds_ = matIds;
-        std::map<const aiTexture*, Image> decoded;
+        std::map<const aiTexture*, Image> decodedLocal;
+        std::map<const aiTexture*, Image>& decoded = opt.part >= 0 ? of.decoded : decodedLocal;
         predecode(sc, matIds, opt.maxTextureSize, decoded);
         g_decoded = &decoded;
         for (int id : matIds) {
@@ -814,4 +880,24 @@ bool CharacterModel::setBaseTexture(int material, const std::string& imagePath) 
     glDeleteTextures(1, &materials[material].texBase);
     materials[material].texBase = upload(im, true);
     return true;
+}
+
+std::vector<std::string> CharacterModel::listParts(const std::string& path) {
+    Assimp::Importer imp;
+    const aiScene* sc = imp.ReadFile(path, 0);
+    std::vector<std::string> out;
+    if (!sc || !sc->mRootNode) return out;
+    glm::mat4 xf;
+    const aiNode* split = splitNode(sc->mRootNode, xf);
+    if (split->mNumMeshes) return out; // o próprio nó tem malha: um objeto só
+    for (unsigned c = 0; c < split->mNumChildren; ++c) {
+        const aiNode* ch = split->mChildren[c];
+        std::string name = ch->mName.C_Str();
+        if (name.empty()) name = "parte" + std::to_string(c);
+        out.push_back(hasMeshes(ch) ? name : ""); // vazio = sem malha (câmera, luz)
+    }
+    int real = 0;
+    for (const std::string& n : out) real += !n.empty();
+    if (real <= 1) out.clear();
+    return out;
 }

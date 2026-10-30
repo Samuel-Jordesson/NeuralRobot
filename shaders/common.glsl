@@ -38,13 +38,13 @@ uniform int uRoofOn;
 uniform vec4 uRoofRect;     // x0, z0, 1/largura, 1/profundidade
 const float kIndoorSky = 0.08; // luz do céu que sobra dentro (entra por portas e janelas)
 
-// luzes postas no editor: 0 pontual, 1 spot, 2 ambiente
+// luzes postas no editor: 0 pontual, 1 spot, 2 ambiente, 3 sol (direcional), 4 área
 #define MAX_LIGHTS 16
 uniform int uLightCount;
 uniform vec4 uLightPos[MAX_LIGHTS];   // xyz, alcance
 uniform vec4 uLightColor[MAX_LIGHTS]; // rgb já com o brilho, tipo
 uniform vec4 uLightDir[MAX_LIGHTS];   // xyz direção do spot, cosseno do cone interno
-uniform float uLightOuter[MAX_LIGHTS]; // cosseno do cone externo
+uniform float uLightOuter[MAX_LIGHTS]; // cosseno do cone externo (área: tamanho do painel)
 
 const float PI = 3.14159265;
 
@@ -179,6 +179,11 @@ vec3 editorLights(vec3 albedo, float metal, float rough, float occl, vec3 N, vec
     vec3 sum = vec3(0.0);
     for (int i = 0; i < MAX_LIGHTS; ++i) {
         if (i >= uLightCount) break;
+        int type0 = int(uLightColor[i].w + 0.5);
+        if (type0 == 3) { // sol: direcional, sem distância
+            sum += directLight(albedo, metal, rough, N, V, -normalize(uLightDir[i].xyz), F0) * uLightColor[i].rgb;
+            continue;
+        }
         vec3 d = uLightPos[i].xyz - P;
         float range = uLightPos[i].w;
         float dist2 = dot(d, d);
@@ -194,6 +199,10 @@ vec3 editorLights(vec3 albedo, float metal, float rough, float occl, vec3 N, vec
         vec3 L = d * inversesqrt(max(dist2, 1e-6));
         float att = window / (dist2 + 0.25);
         if (type == 1) att *= smoothstep(uLightOuter[i], uLightDir[i].w, dot(-L, uLightDir[i].xyz));
+        if (type == 4) { // área: painel que emite para a frente; maior = luz mais macia e espalhada
+            float sz = uLightOuter[i];
+            att = window / (dist2 + sz * sz * 0.5) * max(dot(-L, uLightDir[i].xyz), 0.0) * (1.0 + sz);
+        }
         if (att <= 0.0) continue;
         sum += directLight(albedo, metal, rough, N, V, L, F0) * col * att;
     }
@@ -246,14 +255,23 @@ vec3 shadePBR(vec3 albedo, float metal, float rough, float ao, vec3 N, vec3 P) {
     return direct + ambient + editorLights(albedo, metal, rough, occl, N, V, P, F0);
 }
 
-// ---- pintura do chão (editor): até 4 camadas misturadas por um mapa de pesos em (x, z)
+// ---- pintura do chão (editor): até 4 camadas misturadas por um mapa de pesos em (x, z) e pela
+// altura de cada material (relevo/displacement): onde um é mais alto ele aparece por cima, então a
+// transição segue as pedras e frestas em vez de um degradê. O relevo também dá profundidade (parallax).
+// Camada de água (uPaintWater): sem imagens; molha o que está embaixo e alaga as partes baixas.
 uniform int uPaintOn;
 uniform vec4 uPaintRect;            // x0, z0, 1/lado
 uniform sampler2D uPaintWeights;    // RGBA = peso das camadas 1..4
 uniform sampler2DArray uPaintAlbedo;
 uniform sampler2DArray uPaintNormal;
+uniform sampler2DArray uPaintMask;  // R rugosidade, G oclusão, B altura
 uniform vec4 uPaintTile;            // repetição de cada camada (m)
+uniform vec4 uPaintWater;           // 1 = camada de água
+uniform vec4 uRipples[16];          // ondas na água: x, z, início (uTime), força
+uniform int uRippleCount;
 uniform int uPaintCount;
+
+const float kParallax = 0.035; // profundidade aparente do relevo (m)
 
 // Só em superfícies viradas para cima (chão); 'geoN' = normal da geometria.
 void applyPaint(vec3 pos, vec3 geoN, inout vec3 albedo, inout vec3 N, inout float rough) {
@@ -261,19 +279,82 @@ void applyPaint(vec3 pos, vec3 geoN, inout vec3 albedo, inout vec3 N, inout floa
     vec2 uv = (pos.xz - uPaintRect.xy) * uPaintRect.z;
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return;
     vec4 w = texture(uPaintWeights, uv) * smoothstep(0.5, 0.75, geoN.y);
-    float total = 0.0;
-    vec3 a = vec3(0.0), n = vec3(0.0);
+    float total = 0.0, water = 0.0;
     for (int i = 0; i < 4; ++i) {
-        if (i >= uPaintCount || w[i] < 0.004) continue;
-        vec2 t = pos.xz / max(uPaintTile[i], 0.05);
-        a += texture(uPaintAlbedo, vec3(t, float(i))).rgb * w[i];
-        vec3 tn = texture(uPaintNormal, vec3(t, float(i))).xyz * 2.0 - 1.0;
-        n += normalize(vec3(1, 0, 0) * tn.x + vec3(0, 0, 1) * tn.y + geoN * tn.z) * w[i];
-        total += w[i];
+        if (i >= uPaintCount) break;
+        if (uPaintWater[i] > 0.5) water += w[i];
+        else total += w[i];
     }
-    if (total < 0.004) return;
-    float k = min(total, 1.0);
-    albedo = mix(albedo, a / total, k);
-    N = normalize(mix(N, normalize(n), k));
-    rough = mix(rough, 0.85, k);
+    if (total + water < 0.004) return;
+    // olho no espaço do chão (x, -z, cima) para o parallax
+    vec3 V = normalize(uCamPos - pos);
+    vec2 vt = vec2(V.x, -V.z) / max(V.y, 0.25);
+    // pesos pela altura: peso + altura do material; só os perto do mais alto aparecem
+    vec2 tc[4];
+    vec4 mk[4];
+    float hb[4];
+    float hmax = -1.0;
+    for (int i = 0; i < 4; ++i) {
+        hb[i] = -1.0;
+        if (i >= uPaintCount || uPaintWater[i] > 0.5 || w[i] < 0.004) continue;
+        vec2 t = pos.xz / max(uPaintTile[i], 0.05);
+        float h0 = texture(uPaintMask, vec3(t, float(i))).b;
+        // parallax: as partes baixas do relevo ficam "para dentro"
+        t -= vt * (0.5 - h0) * kParallax / max(uPaintTile[i], 0.05) * vec2(1.0, -1.0);
+        tc[i] = t;
+        mk[i] = texture(uPaintMask, vec3(t, float(i)));
+        hb[i] = w[i] + mk[i].b * 0.6;
+        hmax = max(hmax, hb[i]);
+    }
+    vec3 a = vec3(0.0), n = vec3(0.0);
+    float r = 0.0, ao = 0.0, hgt = 0.0, sum = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        if (hb[i] < 0.0) continue;
+        float bw = max(hb[i] - (hmax - 0.18), 0.0);
+        if (bw <= 0.0) continue;
+        a += texture(uPaintAlbedo, vec3(tc[i], float(i))).rgb * bw;
+        vec3 tn = texture(uPaintNormal, vec3(tc[i], float(i))).xyz * 2.0 - 1.0;
+        n += normalize(vec3(1, 0, 0) * tn.x + vec3(0, 0, -1) * tn.y + geoN * tn.z) * bw;
+        r += mk[i].r * bw;
+        ao += mk[i].g * bw;
+        hgt += mk[i].b * bw;
+        sum += bw;
+    }
+    float under = 0.5; // altura do relevo embaixo da água (0..1)
+    if (sum > 0.0) {
+        float k = min(total, 1.0);
+        albedo = mix(albedo, a / sum * mix(1.0, ao / sum, 0.8), k);
+        N = normalize(mix(N, normalize(n), k));
+        rough = mix(rough, clamp(r / sum, 0.04, 1.0), k);
+        under = hgt / sum;
+    }
+    if (water < 0.004) return;
+    // água: enche primeiro as partes baixas; borda molhada e escura, meio liso e espelhado
+    float level = water * 1.25 - under * 0.55;
+    float wet = smoothstep(0.0, 0.28, level);
+    float puddle = smoothstep(0.32, 0.5, level);
+    albedo *= mix(1.0, 0.5, wet);                 // terra molhada escurece
+    rough = mix(rough, 0.18, wet);
+    vec3 muddy = vec3(0.02, 0.018, 0.015);        // água barrenta: escura, o reflexo domina
+    albedo = mix(albedo, muddy, puddle * 0.92);
+    // ondinhas leves (vento) na superfície da água
+    vec2 rp = pos.xz * 0.9 + vec2(uTime * 0.05, uTime * 0.035);
+    vec2 rip = vec2(texture(uNoise, rp).g, texture(uNoise, rp * 1.7 + 0.3).b) - 0.5;
+    // ondas de pés e tiros: anéis que se abrem a partir do ponto e somem
+    vec2 ring = vec2(0.0);
+    for (int i = 0; i < 16; ++i) {
+        if (i >= uRippleCount) break;
+        vec4 rp = uRipples[i];
+        float age = uTime - rp.z;
+        if (age < 0.0 || age > 2.5) continue;
+        vec2 d = pos.xz - rp.xy;
+        float dist = length(d);
+        float r = 0.04 + age * 0.42;                     // raio da frente da onda
+        float env = exp(-pow((dist - r) / (0.07 + age * 0.05), 2.0)); // faixa da onda (alarga com o tempo)
+        float amp = rp.w * pow(1.0 - age / 2.5, 2.0) / (1.0 + dist * 3.0);
+        ring += d / max(dist, 1e-3) * sin((dist - r) * 55.0) * env * amp;
+    }
+    vec3 flatN = normalize(geoN + vec3(rip.x + ring.x, 0.0, rip.y + ring.y) * 0.06 + vec3(ring.x, 0.0, ring.y) * 0.5);
+    N = normalize(mix(N, flatN, puddle));
+    rough = mix(rough, 0.02, puddle);
 }

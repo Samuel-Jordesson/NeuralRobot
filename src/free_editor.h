@@ -6,6 +6,7 @@
 #include "renderer.h"
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +35,7 @@ public:
         std::vector<std::string> gunNames, gunFiles; // armas do jogo (arquivo relativo à raiz)
         std::vector<glm::vec3> gunPos;               // onde cada arma está agora
         std::vector<float> gunYaw;
+        std::vector<const std::vector<glm::vec3>*> propTris; // triângulos de cada prop (pintar no modelo)
     };
     enum class Result { None, Rebuild, Play, Compile, Settings, EditGun, ChangeScene };
 
@@ -56,7 +58,7 @@ public:
     void drawPlaying(Context& ctx);
 
 private:
-    enum Kind { None, Prop, Box, DoorSel, Spawn, Start, Gun, ExtraDoor };
+    enum Kind { None, Prop, Box, DoorSel, Spawn, Start, Gun, ExtraDoor, Light };
     struct Ray { glm::vec3 o, d; };
     struct Asset {
         std::string rel, name;
@@ -68,15 +70,58 @@ private:
     Ray mouseRay(GLFWwindow* win, int fbw, int fbh) const;
     Ray rayAt(float sx, float sy) const;
     bool groundHit(const Ray& r, Context& c, glm::vec3& out) const;
+    // Superfície exata dos modelos (triângulos) e, se nada, os blocos/chão. Normal virada para o raio.
+    bool surfaceHit(const Ray& r, Context& c, glm::vec3& pos, glm::vec3& normal) const;
     void pick(const Ray& r, Context& c);
     void startGesture(int mode, GLFWwindow* win, Context& ctx, int fbw, int fbh);
     void applyGesture(GLFWwindow* win, Context& ctx, int fbw, int fbh);
     void restore(Context& ctx);
+    // Estado do selecionado no começo de um gesto (mover/girar/escala) e mover pelo deslocamento.
+    void captureSel(Context& ctx);
+    void moveSel(Context& ctx, const glm::vec3& delta);
+    // Setas de mover (como no Blender): 0 X, 1 cima, 2 Z, 3 quadrado (no chão). -1 nenhuma.
+    float gizmoLen(Context& ctx) const;
+    int gizmoPick(float mx, float my, Context& ctx) const;
+    bool gizmoParam(const Ray& r, int axis, glm::vec3& out) const; // ponto do mouse no eixo/plano
+    int gizmoAxis_ = -1, gizmoHover_ = -1;
+    // depuração (GA_CLICK/GA_DRAG): posição do mouse simulada
+    bool fakeMouse_ = false;
+    double fakeMx_ = 0.0, fakeMy_ = 0.0;
+    glm::vec3 gizmoHit0_{0.0f};
     void livePropModel(Context& ctx);
     glm::vec3 selPos(Context& ctx) const;
     std::string selName(const Context& ctx) const;
     bool removeSelected(Context& c);
+    bool duplicateSelected(Context& c); // Shift+D: cópia do selecionado (a cópia fica selecionada)
+
+    // Desfazer (Ctrl+Z) / refazer (Ctrl+Y, Ctrl+Shift+Z): fotos do cenário (layout em texto) e, nas
+    // pinceladas, da pintura do chão e do relevo.
+    struct UndoState {
+        std::string layout;
+        bool hasPaint = false, hasTerrain = false;
+        std::vector<unsigned char> paint;
+        std::vector<float> terrain;
+    };
+    std::vector<UndoState> undo_, redo_;
+    std::string lastLayout_;     // como o cenário estava na última foto
+    int lastScene_ = -1;
+    bool skipNextChange_ = false; // a pincelada já guardou a foto
+    UndoState snapshot(Context& c, bool withGround) const;
+    void restoreSnapshot(Context& c, const UndoState& s);
+    void pushUndo(UndoState s);
+    Result undoRedo(Context& c, bool redo);
+    bool zWas_ = false, yWas_ = false;
     void scanImages();
+    // Conjuntos de textura (material): arquivos com o mesmo nome base e sufixos _Color, _NormalGL,
+    // _NormalDX, _Roughness, _Displacement, _AO... (padrão dos sites de textura). Imagem solta = só cor.
+    struct TexSet {
+        std::string name, color, normal, rough, height, ao;
+        bool dx = false;
+    };
+    std::vector<TexSet> texSets_;
+    void scanTexSets();
+    unsigned thumb(const std::string& rel); // miniatura (textura GL) de uma imagem, carregada uma vez
+    std::map<std::string, unsigned> thumbs_;
     void scanAssets(const Context& c);
     bool placeAsset(const Asset& a, const glm::vec3& pos, Context& c);
     void startImport(bool image = false);
@@ -115,6 +160,14 @@ private:
     float foliageDensity_ = 2.0f, foliageSpacing_ = 0.4f, foliageScale_[2] = {0.8f, 1.25f};
     bool brushing_ = false, brushHasHit_ = false, invert_ = false, strokeProps_ = false;
     glm::vec3 brushHit_{0.0f};
+    // pintar textura no modelo (aba 3): carimbos colados na superfície
+    glm::vec3 brushNormal_{0.0f, 1.0f, 0.0f}, lastStamp_{0.0f}, brushView_{0.0f, 0.0f, 1.0f};
+    bool hasLastStamp_ = false;
+    std::string stainTex_;          // imagem do carimbo (vazio = sujeira automática)
+    float stainStrength_ = 0.7f, stainSpacing_ = 0.45f;
+    bool stainRandomTurn_ = true;
+    int selectTab_ = -1;
+    int editLayer_ = -1;            // camada aberta na janela "Editar textura"            // abre essa aba do pincel no próximo quadro
     float foliageAcc_ = 0.0f;
 
     Kind kind_ = None;

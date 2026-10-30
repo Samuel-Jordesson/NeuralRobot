@@ -67,6 +67,7 @@ void Weapon::fire(World& w, const GunDef& def, const glm::mat4& gunWorld, const 
     if (!h.hit) return;
     glm::vec3 p = muzzle + dir * h.t;
     glm::vec3 n = h.normal;
+    impacts.push_back(p);
 
     if (h.ball >= 0) {
         Ball& b = w.balls[h.ball];

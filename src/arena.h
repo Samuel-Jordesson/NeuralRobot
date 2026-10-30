@@ -3,6 +3,7 @@
 #include "physics.h"
 #include "renderer.h"
 
+#include <string>
 #include <vector>
 
 // Porta de dobradiça empurrada pelo corpo: quem encosta na folha faz ela girar o quanto
@@ -14,7 +15,10 @@ struct Door {
     float base = 0.0f;       // rad; giro da porta fechada (0 = folha ao longo de +X; -pi/2 = ao longo de +Z)
     float vel = 0.0f;        // rad/s
     int collider = -1;       // caixa em World::boxes que barra os raios com a porta fechada
+    bool enabled = true;     // false: o cenário não tem essa porta (nem desenha nem colide)
     bool glass = false;      // vidro com moldura de alumínio (em vez de madeira)
+    glm::vec3 glassColor{0.75f, 0.85f, 0.85f};
+    std::string texture;     // imagem na folha (relativa à raiz); vazio = madeira
     bool framed = false;     // desenha o batente em volta do vão (portas postas pelo editor)
     bool post0 = true, post1 = true; // postes do batente na dobradiça / na ponta (porta dupla: sem o do meio)
 

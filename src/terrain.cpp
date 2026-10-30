@@ -25,6 +25,21 @@ std::vector<unsigned char> loadResized(const std::string& path, int s, bool& ok)
     std::vector<unsigned char> out((size_t)s * s * 4);
     ok = px != nullptr;
     if (!px) return out;
+    // reduz pela metade (média 2x2) enquanto passar do dobro: sem serrilhado
+    std::vector<unsigned char> src(px, px + (size_t)w * h * 4);
+    stbi_image_free(px);
+    while (w >= s * 2 && h >= s * 2) {
+        int nw = w / 2, nh = h / 2;
+        std::vector<unsigned char> d((size_t)nw * nh * 4);
+        for (int y = 0; y < nh; ++y)
+            for (int x = 0; x < nw; ++x)
+                for (int k = 0; k < 4; ++k)
+                    d[((size_t)y * nw + x) * 4 + k] = (unsigned char)((src[((size_t)(2 * y) * w + 2 * x) * 4 + k] + src[((size_t)(2 * y) * w + 2 * x + 1) * 4 + k] +
+                                                                       src[((size_t)(2 * y + 1) * w + 2 * x) * 4 + k] + src[((size_t)(2 * y + 1) * w + 2 * x + 1) * 4 + k] + 2) / 4);
+        src.swap(d);
+        w = nw;
+        h = nh;
+    }
     for (int y = 0; y < s; ++y)
         for (int x = 0; x < s; ++x) {
             float fx = (x + 0.5f) * w / s - 0.5f, fy = (y + 0.5f) * h / s - 0.5f;
@@ -32,12 +47,11 @@ std::vector<unsigned char> loadResized(const std::string& path, int s, bool& ok)
             int x1 = std::min(x0 + 1, w - 1), y1 = std::min(y0 + 1, h - 1);
             float ax = std::clamp(fx - x0, 0.0f, 1.0f), ay = std::clamp(fy - y0, 0.0f, 1.0f);
             for (int k = 0; k < 4; ++k) {
-                float a = px[(y0 * w + x0) * 4 + k] * (1 - ax) + px[(y0 * w + x1) * 4 + k] * ax;
-                float b = px[(y1 * w + x0) * 4 + k] * (1 - ax) + px[(y1 * w + x1) * 4 + k] * ax;
+                float a = src[((size_t)y0 * w + x0) * 4 + k] * (1 - ax) + src[((size_t)y0 * w + x1) * 4 + k] * ax;
+                float b = src[((size_t)y1 * w + x0) * 4 + k] * (1 - ax) + src[((size_t)y1 * w + x1) * 4 + k] * ax;
                 out[((size_t)y * s + x) * 4 + k] = (unsigned char)std::lround(a * (1 - ay) + b * ay);
             }
         }
-    stbi_image_free(px);
     return out;
 }
 } // namespace
@@ -163,6 +177,13 @@ void Terrain::upload() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
     glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(V), v.data(), GL_DYNAMIC_DRAW);
     glBindVertexArray(0);
+    if (!heightTex) glGenTextures(1, &heightTex);
+    glBindTexture(GL_TEXTURE_2D, heightTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, h.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 void Terrain::draw() const {
@@ -176,6 +197,8 @@ void Terrain::release() {
     if (vbo_) glDeleteBuffers(1, &vbo_);
     if (ebo_) glDeleteBuffers(1, &ebo_);
     vao_ = vbo_ = ebo_ = 0;
+    if (heightTex) glDeleteTextures(1, &heightTex);
+    heightTex = 0;
     active = false;
     h.clear();
 }
@@ -219,13 +242,25 @@ void GroundPaint::brush(const glm::vec2& c, float radius, float strength, float 
             float a = falloff(glm::length(p - c), radius, softness) * std::clamp(strength * dt, 0.0f, 1.0f);
             if (a <= 0.0f) continue;
             unsigned char* w = &weights[((size_t)j * res + i) * 4];
-            // mistura suave: a camada pintada cresce e as outras diminuem na mesma proporção
+            // mistura suave: a camada pintada cresce e as outras diminuem na mesma proporção.
+            // Água fica por cima: pintar água não apaga o chão, e pintar chão não apaga a água.
+            const bool waterBrush = layer < (int)layers.size() && layers[layer].kind == 1;
             for (int k = 0; k < 4; ++k) {
+                const bool water = k < (int)layers.size() && layers[k].kind == 1;
+                if (!erase && water != waterBrush) continue;
+                if (erase && waterBrush != water) continue; // Shift com a água escolhida tira só a água
                 float target = !erase && k == layer ? 255.0f : 0.0f;
                 w[k] = (unsigned char)std::lround(w[k] + (target - w[k]) * a);
             }
         }
     uploadWeights();
+}
+
+float GroundPaint::weightAt(const glm::vec2& p, int layer) const {
+    if (!active || layer < 0 || layer >= kMaxLayers) return 0.0f;
+    int i = (int)((p.x - origin.x) / size * res), j = (int)((p.y - origin.y) / size * res);
+    if (i < 0 || j < 0 || i >= res || j >= res) return 0.0f;
+    return weights[((size_t)j * res + i) * 4 + layer] / 255.0f;
 }
 
 void GroundPaint::uploadWeights() {
@@ -245,10 +280,11 @@ void GroundPaint::uploadWeights() {
 
 void GroundPaint::uploadLayers(const std::string& root) {
     const int s = kLayerRes;
+    const int count = std::max(1, std::min((int)layers.size(), kMaxLayers)); // memória só das camadas usadas
     auto makeArray = [&](GLuint& tex, bool srgb) {
         if (!tex) glGenTextures(1, &tex);
         glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, s, s, kMaxLayers, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, s, s, count, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -257,33 +293,50 @@ void GroundPaint::uploadLayers(const std::string& root) {
     };
     makeArray(albedoArr, true);
     makeArray(normalArr, false);
+    makeArray(maskArr, false);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    for (int i = 0; i < kMaxLayers; ++i) {
-        bool ok = false;
-        std::vector<unsigned char> a, nm;
-        if (i < (int)layers.size() && !layers[i].albedo.empty()) a = loadResized(root + "/" + layers[i].albedo, s, ok);
-        if (!ok) a.assign((size_t)s * s * 4, 160); // cinza enquanto não escolhe a imagem
+    auto load = [&](int i, const std::string Layer::*field, bool& ok) {
         ok = false;
-        if (i < (int)layers.size() && !layers[i].normal.empty()) nm = loadResized(root + "/" + layers[i].normal, s, ok);
+        if (i >= (int)layers.size() || (layers[i].*field).empty()) return std::vector<unsigned char>();
+        return loadResized(root + "/" + layers[i].*field, s, ok);
+    };
+    for (int i = 0; i < count; ++i) {
+        bool ok;
+        std::vector<unsigned char> a = load(i, &Layer::albedo, ok);
+        if (!ok) a.assign((size_t)s * s * 4, 160); // cinza enquanto não escolhe a imagem
+        std::vector<unsigned char> nm = load(i, &Layer::normal, ok);
         if (!ok) { // normal "reta"
             nm.resize((size_t)s * s * 4);
             for (size_t k = 0; k < nm.size(); k += 4) { nm[k] = 128; nm[k + 1] = 128; nm[k + 2] = 255; nm[k + 3] = 255; }
+        } else if (layers[i].normalDX)
+            for (size_t k = 1; k < nm.size(); k += 4) nm[k] = 255 - nm[k]; // DirectX -> OpenGL
+        // rugosidade, oclusão e altura num pixel só (cada uma vem de uma imagem cinza)
+        bool okR, okA, okH;
+        std::vector<unsigned char> r = load(i, &Layer::rough, okR), ao = load(i, &Layer::ao, okA), h = load(i, &Layer::height, okH);
+        std::vector<unsigned char> mask((size_t)s * s * 4);
+        for (size_t k = 0; k < mask.size(); k += 4) {
+            mask[k] = okR ? r[k] : 217;     // sem mapa: 0,85
+            mask[k + 1] = okA ? ao[k] : 255;
+            mask[k + 2] = okH ? h[k] : 128;
+            mask[k + 3] = 255;
         }
         glBindTexture(GL_TEXTURE_2D_ARRAY, albedoArr);
         glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, s, s, 1, GL_RGBA, GL_UNSIGNED_BYTE, a.data());
         glBindTexture(GL_TEXTURE_2D_ARRAY, normalArr);
         glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, s, s, 1, GL_RGBA, GL_UNSIGNED_BYTE, nm.data());
+        glBindTexture(GL_TEXTURE_2D_ARRAY, maskArr);
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, s, s, 1, GL_RGBA, GL_UNSIGNED_BYTE, mask.data());
     }
-    glBindTexture(GL_TEXTURE_2D_ARRAY, albedoArr);
-    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, normalArr);
-    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    for (GLuint t : {albedoArr, normalArr, maskArr}) {
+        glBindTexture(GL_TEXTURE_2D_ARRAY, t);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
 }
 
 void GroundPaint::release() {
-    GLuint t[3] = {weightTex, albedoArr, normalArr};
-    glDeleteTextures(3, t);
-    weightTex = albedoArr = normalArr = 0;
+    GLuint t[4] = {weightTex, albedoArr, normalArr, maskArr};
+    glDeleteTextures(4, t);
+    weightTex = albedoArr = normalArr = maskArr = 0;
     active = false;
     weights.clear();
     layers.clear();
