@@ -1,0 +1,45 @@
+# Cenario (editor livre). Angulos em graus.
+prop casa_Cube 0 0 -18 360 1 assets/casa.glb#0
+prop casa_Cube.001 0 0 -18 360 1 assets/casa.glb#1
+prop casa_Cube.003 0 0 -18 360 1 assets/casa.glb#2
+prop casa_Cube.004 0 0 -18 360 1 assets/casa.glb#3
+prop casa_Cube.005 0 0 -18 360 1 assets/casa.glb#4
+prop casa_Cube.006 0 0 -18 360 1 assets/casa.glb#5
+prop casa_Cube.007 0 0 -18 360 1 assets/casa.glb#6
+prop casa_node_0.018 0 0 -18 360 1 assets/casa.glb#7
+prop casa_Plane 0 0 -18 360 1 assets/casa.glb#8
+prop casa_Plane.001 0 0 -18 360 1 assets/casa.glb#9
+prop casa_Plane.002 0 0 -18 360 1 assets/casa.glb#10
+prop casa_Plane.003 0 0 -18 360 1 assets/casa.glb#11
+prop casa_Plane.004 0 0 -18 360 1 assets/casa.glb#12
+prop casa_Plane.007 0 0 -18 360 1 assets/casa.glb#13
+prop casa_Plane.008 0 0 -18 360 1 assets/casa.glb#14
+prop casa_Plane.009 0 0 -18 360 1 assets/casa.glb#15
+prop casa_Plane.010 0 0 -18 360 1 assets/casa.glb#16
+prop casa_Plane.011 0 0 -18 360 1 assets/casa.glb#17
+prop casa_Plane.012 0 0 -18 360 1 assets/casa.glb#18
+prop casa_Plane.013 0 0 -18 360 1 assets/casa.glb#19
+prop casa_Plane.014 0 0 -18 360 1 assets/casa.glb#20
+prop casa_Plane.015 0 0 -18 360 1 assets/casa.glb#21
+prop casa_Plane.016 0 0 -18 360 1 assets/casa.glb#22
+prop casa_Plane.017 0 0 -18 360 1 assets/casa.glb#23
+prop casa_Plane.018 0 0 -18 360 1 assets/casa.glb#24
+prop casa_Sketchfab_model.001 0 0 -18 360 1 assets/casa.glb#26
+prop casa_Sketchfab_model.004 0 0 -18 360 1 assets/casa.glb#28
+prop casa_Sketchfab_model.005 0 0 -18 360 1 assets/casa.glb#29
+prop casa_Sketchfab_model.006 0 0 -18 360 1 assets/casa.glb#30
+prop casa_Sketchfab_model.008 0 0 -18 360 1 assets/casa.glb#32
+prop casa_Sketchfab_model.009 0 0 -18 360 1 assets/casa.glb#33
+prop casa_Sketchfab_model.010 0 0 -18 360 1 assets/casa.glb#34
+nodoor
+nomap
+nospawns
+nodoors
+light 4 -0.403653 3.2174 -17.259 173.583 -90 0.968085 0.643674 0.102988 10 10 25 40 1
+light 4 7.15399 3.2174 -26.7704 173.583 -90 0.968085 0.643674 0.102988 10 10 25 40 1
+light 4 14.7498 3.04504 -20.3613 173.583 -90 0.968085 0.643674 0.102988 10 10 25 40 1
+light 4 5.7393 3.04504 -20.3613 173.583 -90 0.968085 0.643674 0.102988 10 10 25 40 1
+light 4 22.7885 3.04504 -18.0533 173.583 -90 0.968085 0.643674 0.102988 10 10 25 40 1
+paint -150 -150 300 512
+layer 3 textures/Ground003_2K-JPG_Color.jpg|textures/Ground003_2K-JPG_NormalGL.jpg|textures/Ground003_2K-JPG_Roughness.jpg|textures/Ground003_2K-JPG_Displacement.jpg|||||0
+start 0 0 0 180

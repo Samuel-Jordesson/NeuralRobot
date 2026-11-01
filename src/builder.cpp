@@ -45,7 +45,7 @@ void start(const std::string& root) {
         const std::string pkg = "'" + root + "/Jogo-final'";
         ok = ok && run("mkdir -p " + pkg) &&
              run("rsync -a --delete --exclude /build --exclude /build-final --exclude /Jogo-final --exclude /src "
-                 "--exclude /third_party --exclude /.git --exclude /.vscode --exclude '*.md' --exclude /CMakeLists.txt "
+                 "--exclude /third_party --exclude /.git --exclude /.cache --exclude /.vscode --exclude '*.md' --exclude /CMakeLists.txt "
                  "--exclude /run.sh --exclude /index.html " + q + "/ " + pkg + "/") &&
              run("cp " + dir + "/ga " + pkg + "/ga");
         append(ok ? "\nPronto.\n" : "\nFalhou.\n");

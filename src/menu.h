@@ -15,6 +15,8 @@ void shutdown();
 void beginFrame();
 // Desenha o menu. 'changed' fica true quando alguma opção foi mexida.
 Action drawPauseMenu(GraphicsSettings& gs, bool& changed);
+// Menu de pausa do jogo (Esc): Continuar, Configurações e Sair no centro; configurações simples.
+Action drawGameMenu(GraphicsSettings& gs, bool& changed);
 void drawFps(float fps, float frameMs);
 
 // HUD do combate: vida, inimigos, marcador de acerto e avisos.

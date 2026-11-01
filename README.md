@@ -122,3 +122,11 @@ Gráficos na captura (usa os padrões, não o `settings.ini`):
 - `--bench 60` mede o tempo por quadro.
 
 `./build/ga --menu` abre o jogo já pausado no menu.
+
+## Captura de movimento pela câmera (editor de animação)
+No editor de animação, painel Detalhes > **Captura de movimento (câmera)**:
+- **Câmera do PC:** abre `http://localhost:47810` no navegador; clique em "Ativar câmera".
+- **Câmera do celular:** mostra um QR code com `https://<ip-do-pc>:47843` (celular na mesma rede wi-fi). O navegador avisa que a conexão não é particular, porque o certificado é gerado neste PC: toque em Avançado > Continuar. Depois toque em "Ativar câmera" e permita câmera e movimento. "Trocar câmera" alterna entre a frontal e a traseira.
+- O personagem copia seus movimentos ao vivo. **Gravar movimento** começa a gravação e **Parar** transforma o que foi gravado em keyframes da animação; o giroscópio do celular é salvo junto. Clique em Salvar para guardar em `anims/`.
+- Opções: compensar o giro e a inclinação do celular, andar pelo palco (experimental), suavização e calibrar.
+- A detecção do corpo é feita na página com o MediaPipe Pose, carregado da internet (o PC ou o celular precisa de internet). O servidor é `tools/mocap/server.js` (Node.js).

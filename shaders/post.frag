@@ -17,6 +17,37 @@ uniform float uTemperature;
 uniform float uVignette;
 uniform float uGrain;
 uniform float uTime;
+uniform int uDofOn;
+uniform sampler2D uDepth;
+uniform float uFocus;     // m
+uniform float uCocScale;  // px do círculo de confusão por unidade de |d - foco| / d
+uniform vec2 uProjZ;      // proj[2][2], proj[3][2] (profundidade -> distância)
+
+float viewDist(vec2 uv) {
+    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;
+    return uProjZ.y / (ndc + uProjZ.x);
+}
+float coc(float d) { return min(uCocScale * abs(d - uFocus) / max(d, 0.01), 18.0); }
+
+// Desfoque de lente: disco de amostras (ângulo de ouro), cada uma pesada pelo próprio desfoque
+// (o que está em foco não vaza para cima do fundo desfocado).
+vec3 dofColor(vec2 uv) {
+    vec2 px = 1.0 / vec2(textureSize(uHDR, 0));
+    float c0 = coc(viewDist(uv));
+    vec3 acc = texture(uHDR, uv).rgb;
+    float wsum = 1.0;
+    if (c0 < 0.5) return acc;
+    for (int i = 1; i < 24; ++i) {
+        float r = sqrt(float(i) / 24.0) * c0;
+        float a = float(i) * 2.39996;
+        vec2 o = vec2(cos(a), sin(a)) * r * px;
+        float cs = coc(viewDist(uv + o));
+        float w = clamp(cs / max(r, 0.5), 0.0, 1.0);
+        acc += texture(uHDR, uv + o).rgb * w;
+        wsum += w;
+    }
+    return acc / wsum;
+}
 
 const mat3 kACESIn = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
 const mat3 kACESOut = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
@@ -37,7 +68,9 @@ float hash(vec2 p) {
 void main() {
     vec2 q = vUV - 0.5;
     vec3 col;
-    if (uChromatic > 0.001) {
+    if (uDofOn == 1) {
+        col = dofColor(vUV);
+    } else if (uChromatic > 0.001) {
         vec2 off = q * dot(q, q) * uChromatic * 0.06;
         col = vec3(texture(uHDR, vUV - off).r, texture(uHDR, vUV).g, texture(uHDR, vUV + off).b);
     } else {

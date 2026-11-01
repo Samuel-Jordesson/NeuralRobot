@@ -42,6 +42,11 @@ public:
     // Desce pelos nós que só embrulham (Sketchfab_model, root...) até onde o arquivo se divide;
     // cada filho dali é uma parte. Retorna os nomes (vazio se o arquivo tem um objeto só).
     static std::vector<std::string> listParts(const std::string& path);
+    // Cache em disco dos modelos já processados (malha + texturas comprimidas): a partir da segunda vez
+    // o arquivo original nem é aberto. Vazio = sem cache.
+    static std::string cacheDir;
+    // Solta o arquivo aberto e as texturas guardadas para carregar várias partes (chamar depois de montar a cena).
+    static void releaseShared();
     // sk == nullptr: objeto rígido (ex.: a arma), desenhado com uBones[0] = identidade,
     // ou modelo com rig próprio (opt.boneMap).
     bool load(const std::string& path, const Skeleton* sk, const LoadOptions& opt);
@@ -83,6 +88,8 @@ public:
     bool recut(const std::vector<std::pair<glm::vec3, glm::vec3>>& cuts, std::vector<glm::vec3>* triangles);
 
 private:
+    bool loadCache(const std::string& file, const LoadOptions& opt);
+    void saveCache(const std::string& file, const void* verts, size_t nVerts, const std::vector<unsigned>& idx) const;
     GLuint vao_ = 0, vbo_ = 0, ebo_ = 0;
     GLsizei indexCount_ = 0;
     // malha original (antes dos recortes), para recut

@@ -3,10 +3,12 @@
 #include "character_model.h"
 #include "level.h"
 #include "physics.h"
+#include "panel_layout.h"
 #include "renderer.h"
 
 #include <atomic>
 #include <map>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,7 +60,7 @@ public:
     void drawPlaying(Context& ctx);
 
 private:
-    enum Kind { None, Prop, Box, DoorSel, Spawn, Start, Gun, ExtraDoor, Light };
+    enum Kind { None, Prop, Box, DoorSel, Spawn, Start, Gun, ExtraDoor, Light, ClothSel };
     struct Ray { glm::vec3 o, d; };
     struct Asset {
         std::string rel, name;
@@ -72,7 +74,26 @@ private:
     bool groundHit(const Ray& r, Context& c, glm::vec3& out) const;
     // Superfície exata dos modelos (triângulos) e, se nada, os blocos/chão. Normal virada para o raio.
     bool surfaceHit(const Ray& r, Context& c, glm::vec3& pos, glm::vec3& normal) const;
-    void pick(const Ray& r, Context& c);
+    void pick(const Ray& r, Context& c, bool add = false);
+    // seleção de vários (Shift + clique): os outros ficam em extra_, cada um com o estado do começo do gesto
+    struct SelItem {
+        Kind k;
+        int i;
+        glm::vec3 pos0{0.0f}, bmin0{0.0f}, bmax0{0.0f};
+        float yaw0 = 0.0f, scale0 = 1.0f;
+        glm::mat4 pivot0{1.0f};
+    };
+    std::vector<SelItem> extra_;
+    bool isSel(Kind k, int i) const;
+    void toggleSel(Kind k, int i);
+    void forEachSel(const std::function<void()>& f); // roda f com cada selecionado como o "atual"
+    void validateSel(Context& c);
+    void groupCapture(Context& c) { forEachSel([&] { captureSel(c); }); }
+    void groupMove(Context& c, const glm::vec3& d) { forEachSel([&] { moveSel(c, d); }); }
+    void groupRestore(Context& c) { forEachSel([&] { restore(c); }); }
+    bool removeGroup(Context& c);
+    bool duplicateGroup(Context& c);
+    glm::vec3 groupPivot_{0.0f}; // centro do grupo no começo do gesto (girar vários: giram em volta dele)
     void startGesture(int mode, GLFWwindow* win, Context& ctx, int fbw, int fbh);
     void applyGesture(GLFWwindow* win, Context& ctx, int fbw, int fbh);
     void restore(Context& ctx);
@@ -148,6 +169,7 @@ private:
     bool viewHovered_ = false; // mouse em cima da vista (e não de um painel)
     bool rebuildPending_ = false;
     bool playing_ = false;
+    PanelLayout layout_; // tamanho dos painéis (arrastando as divisórias)
 
     // pincel (botão Pintar): 0 textura, 1 relevo, 2 folhagem
     bool paintMode_ = false;

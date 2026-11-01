@@ -188,6 +188,8 @@ std::string LevelLayout::serialize() const {
         o << "box " << i << " " << b.first.x << " " << b.first.y << " " << b.first.z << " " << b.second.x << " "
           << b.second.y << " " << b.second.z << "\n";
     if (!hasDoor) o << "nodoor\n";
+    if (std::none_of(props.begin(), props.end(), [](const PropPlace& p) { return p.name == "mapa"; }) && sceneMap)
+        o << "nomap\n"; // cenário oficial sem o mapa do Untitled.fbx
     if (spawns.empty()) o << "nospawns\n";
     if (hasDoor)
         o << "door " << doorHinge.x << " " << doorHinge.y << " " << doorHinge.z << " " << doorWidth << " " << doorHeight << "\n";
@@ -203,7 +205,7 @@ std::string LevelLayout::serialize() const {
     for (const LightPlace& li : lights)
         o << "light " << li.type << " " << li.pos.x << " " << li.pos.y << " " << li.pos.z << " " << glm::degrees(li.yaw) << " "
           << glm::degrees(li.pitch) << " " << li.color.r << " " << li.color.g << " " << li.color.b << " " << li.intensity
-          << " " << li.range << " " << li.inner << " " << li.outer << " " << li.size << "\n";
+          << " " << li.range << " " << li.inner << " " << li.outer << " " << li.size << " " << (li.shadow ? 1 : 0) << "\n";
     // pintura nos modelos: posição, normal, raio, giro, força, suavidade, imagem (- = sujeira automática)
     for (const StainPlace& st : stains)
         o << "stain " << st.pos.x << " " << st.pos.y << " " << st.pos.z << " " << st.normal.x << " " << st.normal.y << " "
@@ -211,6 +213,13 @@ std::string LevelLayout::serialize() const {
           << (st.tex.empty() ? "-" : st.tex) << "\n";
     for (auto& [i, g] : guns)
         o << "gun " << i << " " << g.first.x << " " << g.first.y << " " << g.first.z << " " << glm::degrees(g.second) << "\n";
+    // tecido: posição, giro, largura, altura, preso, rigidez, dobra, peso, amortecimento, vento, física, repetição, textura
+    for (const ClothPlace& cl : cloths)
+        o << "cloth " << cl.pos.x << " " << cl.pos.y << " " << cl.pos.z << " " << glm::degrees(cl.yaw) << " " << cl.width << " "
+          << cl.height << " " << cl.pin << " " << cl.stiffness << " " << cl.bend << " " << cl.mass << " " << cl.damping << " "
+          << cl.windResponse << " " << (cl.physics ? 1 : 0) << " " << cl.tile << " " << (cl.texture.empty() ? "-" : cl.texture)
+          << "\n";
+    if (cloths.empty()) o << "nocloths\n";
     for (size_t i = 0; i < spawns.size(); ++i)
         o << "spawn " << spawns[i].x << " " << spawns[i].y << " " << spawns[i].z << " " << glm::degrees(spawnYaw[i]) << "\n";
     if (paintOn) {
@@ -227,6 +236,7 @@ std::string LevelLayout::serialize() const {
 }
 
 bool LevelLayout::parse(const std::string& text) {
+    bool clothSeen = false;
     std::istringstream in(text);
     std::string line;
     bool any = false, spawnSeen = false, door2Seen = false, lightSeen = false, stainSeen = false;
@@ -286,12 +296,28 @@ bool LevelLayout::parse(const std::string& text) {
             glm::vec3 s3(1.0f);
             l >> name >> s3.x >> s3.y >> s3.z;
             if (PropPlace* e = prop(name)) e->stretch = s3;
+        } else if (k == "nomap") { // tira o mapa (Untitled.fbx) do cenário oficial
+            props.erase(std::remove_if(props.begin(), props.end(), [](const PropPlace& p) { return p.name == "mapa"; }), props.end());
+            sceneMap = true;
         } else if (k == "nodoor") { // cenário sem a porta principal
             hasDoor = false;
         } else if (k == "nospawns") { // cenário sem inimigos
             spawns.clear();
             spawnYaw.clear();
             spawnSeen = true;
+        } else if (k == "cloth" || k == "nocloths") {
+            if (!clothSeen) { cloths.clear(); clothSeen = true; } // o arquivo substitui os de fábrica
+            if (k == "nocloths") { any = true; continue; }
+            ClothPlace cl;
+            float yawDeg;
+            int phys;
+            l >> cl.pos.x >> cl.pos.y >> cl.pos.z >> yawDeg >> cl.width >> cl.height >> cl.pin >> cl.stiffness >> cl.bend >> cl.mass >>
+                cl.damping >> cl.windResponse >> phys >> cl.tile;
+            std::getline(l >> std::ws, cl.texture);
+            if (cl.texture == "-") cl.texture.clear();
+            cl.yaw = glm::radians(yawDeg);
+            cl.physics = phys != 0;
+            cloths.push_back(cl);
         } else if (k == "stain") {
             if (!stainSeen) { stains.clear(); stainSeen = true; }
             StainPlace st;
@@ -308,6 +334,8 @@ bool LevelLayout::parse(const std::string& text) {
                 >> li.range >> li.inner >> li.outer;
             float sz;
             if (l >> sz) li.size = sz;
+            int shd;
+            if (l >> shd) li.shadow = shd != 0;
             li.yaw = glm::radians(y);
             li.pitch = glm::radians(pi);
             lights.push_back(li);
@@ -399,6 +427,19 @@ void defaultTestLayout(LevelLayout& L) {
     for (const glm::vec3& p : L.spawns) L.spawnYaw.push_back(std::atan2(0.0f - p.x, 21.8f - p.z));
     L.start = glm::vec3(0.0f);
     L.startYaw = 0.0f;
+    // tecidos de exemplo: cortina pendurada (borda de cima presa) e toalha solta caindo na mesa
+    ClothPlace cortina;
+    cortina.pos = {-2.5f, 2.7f, 4.0f};
+    cortina.yaw = 0.0f;
+    cortina.width = 2.0f;
+    cortina.height = 2.5f;
+    ClothPlace toalha;
+    toalha.pos = {4.3f, 1.7f, 3.0f};
+    toalha.width = 1.6f;
+    toalha.height = 1.6f;
+    toalha.pin = 3;
+    toalha.bend = 0.15f;
+    L.cloths = {cortina, toalha};
 }
 
 Arena buildTestScene(World& w, LevelLayout& L, std::vector<Table>& tables) {
@@ -499,6 +540,10 @@ void defaultOfficialLayout(LevelLayout& L) {
 }
 
 bool OfficialLevel::load(const std::string& root, const LevelLayout& L) {
+    if (std::none_of(L.props.begin(), L.props.end(), [](const PropPlace& p) { return p.name == "mapa"; })) {
+        loaded = true; // sem o mapa: só o chão (e o que estiver posto no layout)
+        return true;
+    }
     std::vector<std::pair<glm::vec3, glm::vec3>> cuts;
     const glm::mat4 mapM = propMatrix(L, "mapa", kMapPivot);
     for (const DoorPlace& d : L.allDoors()) {
@@ -549,7 +594,7 @@ Arena OfficialLevel::build(World& w, std::vector<RenderScene::Prop>& props, cons
     w = World();
     const glm::mat4 mapM = propMatrix(L, "mapa", kMapPivot);
     for (const PropPlace& p : L.props)
-        if (p.name == "mapa") props.push_back({&map, p.matrix(kMapPivot)});
+        if (p.name == "mapa") props.push_back({&map, p.matrix(kMapPivot), true});
     // entulho baixo (até 45 cm) não bloqueia: dá para pisar por cima
     addMeshColliders(w, mapTris, mapM, 0.15f, 0.45f);
     const glm::vec3 frame(0.22f, 0.17f, 0.13f);
@@ -729,7 +774,7 @@ void AssetLibrary::build(World& w, std::vector<RenderScene::Prop>& props, const 
         glm::mat4 M = p.matrix();
         props.push_back({&e->model, M});
         const int mode = collisionOf(p.asset);
-        if (mode == Solid) addMeshColliders(w, e->tris, M, 0.12f, 0.35f);
+        if (mode == Solid) addMeshColliders(w, e->tris, M, 0.12f, 0.06f); // degraus e pisos baixos viram colisão (dá para subir)
         else if (mode == Physics) {
             Dynamic d;
             d.prop = (int)props.size() - 1;

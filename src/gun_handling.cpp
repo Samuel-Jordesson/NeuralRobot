@@ -9,6 +9,7 @@ namespace {
 
 // tempos (s) de cada gesto
 constexpr float kPickReach = 0.55f, kPickGrab = 0.55f, kPickLift = 0.78f, kPickEnd = 1.35f;
+constexpr float kCancelFade = 0.3f; // desistiu de pegar: tempo para o corpo voltar ao movimento
 // pistola na cintura
 constexpr float kHolsterAbove = 0.30f, kHolsterIn = 0.44f, kHolsterEnd = 0.78f;
 constexpr float kDrawGrab = 0.26f, kDrawPull = 0.40f, kDrawEnd = 0.74f;
@@ -46,8 +47,22 @@ void GunHandling::start(Action a, int item, int slot) {
     approachTime = 0.0f;
 }
 
+void GunHandling::cancel() {
+    if (action_ == Action::PickUp && started_ && t_ < kPickGrab) { // no meio do gesto: some aos poucos
+        fading_ = true;
+        fadeT_ = 0.0f;
+    }
+    action_ = Action::None;
+}
+
+bool GunHandling::pastGrab() const { return action_ == Action::PickUp && started_ && t_ >= kPickGrab; }
+
 GunHandling::Events GunHandling::update(float dt) {
     Events ev;
+    if (fading_) {
+        fadeT_ += dt;
+        if (fadeT_ >= kCancelFade) fading_ = false;
+    }
     if (action_ == Action::None) return ev;
     if (!started_) {
         approachTime += dt;
@@ -78,14 +93,17 @@ GunHandling::Events GunHandling::update(float dt) {
 HandReach GunHandling::reach(const Skeleton& sk, const glm::mat4 globals[BONE_COUNT], const GunDef& def,
                              const glm::mat4& tableGun) const {
     HandReach r;
-    if (action_ == Action::None || !started_) return r;
+    if ((action_ == Action::None && !fading_) || !started_) return r;
     const float t = t_;
-    switch (action_) {
+    switch (fading_ ? Action::PickUp : action_) {
     case Action::PickUp: {
-        // corpo: inclina e dobra os joelhos enquanto a mão desce; volta ao trazer a arma
+        // corpo: inclina e dobra os joelhos enquanto a mão desce; volta ao trazer a arma.
+        // Arma baixa (no chão): agacha de verdade e inclina menos; na mesa: quase só inclina
         float body = ss(0.0f, 0.45f, t) * (1.0f - ss(kPickLift - 0.1f, kPickEnd - 0.1f, t));
-        r.lean = 0.70f * body;
-        r.crouch = 0.10f * body;
+        const float gy = glm::vec3(tableGun * glm::vec4(def.grip, 1.0f)).y; // altura da empunhadura (espaço do modelo)
+        const float low = 1.0f - ss(0.35f, 0.75f, gy);
+        r.lean = glm::mix(0.70f, 0.55f, low) * body;
+        r.crouch = glm::mix(0.10f, 0.38f, low) * body;
         r.look = body;
         r.lookAt = glm::vec3(tableGun * glm::vec4(def.grip, 1.0f));
         // a mão vem por cima, desce até a empunhadura, fecha, levanta a arma da mesa
@@ -129,6 +147,14 @@ HandReach GunHandling::reach(const Skeleton& sk, const glm::mat4 globals[BONE_CO
         }
         break;
     default: break;
+    }
+    if (fading_) { // desistiu: a pose some aos poucos
+        const float w = 1.0f - ss(0.0f, kCancelFade, fadeT_);
+        r.arm *= w;
+        r.lean *= w;
+        r.crouch *= w;
+        r.look *= w;
+        r.support *= w;
     }
     return r;
 }

@@ -69,6 +69,10 @@ void forEachField(GraphicsSettings& s, F&& f) {
     f("sunAzimuth", &s.sunAzimuth);
     f("fogDensity", &s.fogDensity);
     f("clouds", &s.clouds);
+    f("wind", &s.wind);
+    f("windStrength", &s.windStrength);
+    f("windDir", &s.windDir);
+    f("windGust", &s.windGust);
     f("cloudCoverage", &s.cloudCoverage);
     f("cloudShadows", &s.cloudShadows);
     f("bloom", &s.bloom);

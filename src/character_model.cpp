@@ -12,6 +12,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <fstream>
+#include <mutex>
+#include <sys/stat.h>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -157,6 +161,17 @@ struct Image {
     std::string name;
 };
 
+// RAM livre agora (MemAvailable do Linux), para não decodificar mais texturas do que cabe.
+size_t memAvailableBytes() {
+    std::ifstream f("/proc/meminfo");
+    std::string k;
+    size_t v;
+    std::string unit;
+    while (f >> k >> v >> unit)
+        if (k == "MemAvailable:") return v * 1024;
+    return (size_t)2 << 30;
+}
+
 // Reduz pela metade (média 2x2) até caber em maxSize.
 void downscale(Image& im, int maxSize) {
     while (maxSize > 0 && std::max(im.w, im.h) > maxSize && im.w > 1 && im.h > 1) {
@@ -175,13 +190,38 @@ void downscale(Image& im, int maxSize) {
     }
 }
 
+// Reduz por um fator inteiro (média de blocos f x f) direto da imagem de origem, sem cópia intermediária.
+void shrinkInto(const unsigned char* src, int w, int h, int f, Image& out) {
+    const int ow = std::max(1, w / f), oh = std::max(1, h / f);
+    out.px.resize((size_t)ow * oh * 4);
+    for (int y = 0; y < oh; ++y)
+        for (int x = 0; x < ow; ++x) {
+            unsigned acc[4] = {0, 0, 0, 0}, n = 0;
+            for (int dy = 0; dy < f && y * f + dy < h; ++dy)
+                for (int dx = 0; dx < f && x * f + dx < w; ++dx) {
+                    const unsigned char* p = src + ((size_t)(y * f + dy) * w + (x * f + dx)) * 4;
+                    for (int k = 0; k < 4; ++k) acc[k] += p[k];
+                    ++n;
+                }
+            unsigned char* o = &out.px[((size_t)y * ow + x) * 4];
+            for (int k = 0; k < 4; ++k) o[k] = (unsigned char)((acc[k] + n / 2) / std::max(1u, n));
+        }
+    out.w = ow;
+    out.h = oh;
+}
+
 bool decodeTexture(const aiTexture* tex, const char* name, int maxSize, Image& out) {
     int w, h, c;
     if (tex->mHeight == 0) {
         unsigned char* px = stbi_load_from_memory((const stbi_uc*)tex->pcData, (int)tex->mWidth, &w, &h, &c, 4);
         if (!px) return false;
-        out.px.assign(px, px + (size_t)w * h * 4);
+        int f = 1;
+        while (maxSize > 0 && std::max(w / f, h / f) > maxSize) f *= 2;
+        if (f > 1) shrinkInto(px, w, h, f, out); // 8K -> 2K sem guardar outra cópia de 256 MB
+        else { out.px.assign(px, px + (size_t)w * h * 4); out.w = w; out.h = h; }
         stbi_image_free(px);
+        out.name = name;
+        return true;
     } else {
         w = (int)tex->mWidth;
         h = (int)tex->mHeight;
@@ -228,8 +268,33 @@ void predecode(const aiScene* sc, const std::vector<int>& matIds, int maxSize, s
     std::vector<Image> imgs(todo.size());
     std::vector<char> ok(todo.size(), 0);
     std::atomic<size_t> next{0};
+    // memória: cada decodificação ocupa a imagem inteira (8K = 256 MB); só roda junto o que cabe no
+    // orçamento (~35% da RAM livre), senão o sistema fica sem memória e trava
+    std::vector<size_t> need(todo.size(), 64u << 20);
+    for (size_t i = 0; i < todo.size(); ++i) {
+        int w = 0, h = 0, c = 0;
+        const aiTexture* t = todo[i].first;
+        if (t->mHeight == 0 && stbi_info_from_memory((const stbi_uc*)t->pcData, (int)t->mWidth, &w, &h, &c))
+            need[i] = (size_t)w * h * 4 + (size_t)std::min(w, maxSize > 0 ? maxSize : w) * std::min(h, maxSize > 0 ? maxSize : h) * 4;
+    }
+    const size_t budget = std::max<size_t>(256u << 20, memAvailableBytes() * 35 / 100);
+    std::mutex mu;
+    std::condition_variable cv;
+    size_t inUse = 0;
     auto work = [&]() {
-        for (size_t i; (i = next++) < todo.size();) ok[i] = decodeTexture(todo[i].first, todo[i].second.c_str(), maxSize, imgs[i]);
+        for (size_t i; (i = next++) < todo.size();) {
+            {
+                std::unique_lock<std::mutex> lk(mu);
+                cv.wait(lk, [&] { return inUse == 0 || inUse + need[i] <= budget; });
+                inUse += need[i];
+            }
+            ok[i] = decodeTexture(todo[i].first, todo[i].second.c_str(), maxSize, imgs[i]);
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                inUse -= need[i];
+            }
+            cv.notify_all();
+        }
     };
     const unsigned n = std::max(1u, std::min<unsigned>(std::thread::hardware_concurrency(), (unsigned)todo.size()));
     std::vector<std::thread> th;
@@ -289,8 +354,49 @@ bool cutoutAlpha(Image& im, std::string name) {
     return true;
 }
 
+// Parâmetros comuns das texturas dos modelos (repetição, mipmap, anisotrópico).
+void textureParams(int levels) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, std::max(0, levels - 1));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    if (GLEW_EXT_texture_filter_anisotropic) {
+        float a = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &a);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, std::fmin(8.0f, a));
+    }
+}
+
+// Textura comprimida na placa (DXT1 sem transparência, DXT5 com): 4 a 8 vezes menos memória de vídeo,
+// que na placa integrada sai da mesma RAM. Os mipmaps são feitos aqui (comprimida não gera sozinha).
+GLuint uploadCompressed(const Image& im, bool srgb) {
+    bool alpha = false;
+    for (size_t i = 3; i < im.px.size() && !alpha; i += 4) alpha = im.px[i] < 250;
+    const GLenum fmt = srgb ? (alpha ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : GL_COMPRESSED_SRGB_S3TC_DXT1_EXT)
+                            : (alpha ? GL_COMPRESSED_RGBA_S3TC_DXT5_EXT : GL_COMPRESSED_RGB_S3TC_DXT1_EXT);
+    GLuint t;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    Image lvl = im;
+    int level = 0;
+    for (;;) {
+        glTexImage2D(GL_TEXTURE_2D, level, fmt, lvl.w, lvl.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, lvl.px.data());
+        ++level;
+        if (lvl.w == 1 && lvl.h == 1) break;
+        Image next;
+        shrinkInto(lvl.px.data(), lvl.w, lvl.h, 2, next);
+        lvl = std::move(next);
+    }
+    textureParams(level);
+    return t;
+}
+
 GLuint upload(const Image& im, bool srgb) {
     std::printf("[modelo] textura %s %dx%d\n", im.name.c_str(), im.w, im.h);
+    static const bool s3tc = GLEW_EXT_texture_compression_s3tc != 0;
+    if (s3tc && im.w >= 64 && im.h >= 64) return uploadCompressed(im, srgb);
     return makeTexture2D(im.px.data(), im.w, im.h, srgb);
 }
 
@@ -616,9 +722,207 @@ bool outsideFrustum(const glm::mat4& mvp, const glm::vec3& lo, const glm::vec3& 
 
 } // namespace
 
+std::string CharacterModel::cacheDir;
+
+void CharacterModel::releaseShared() { openFile() = OpenFile(); }
+
+namespace {
+void setupVao(GLuint& vao, GLuint& vbo, GLuint& ebo, const std::vector<Vertex>& verts, const std::vector<unsigned>& idx) {
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
+    const GLsizei st = sizeof(Vertex);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, pos));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, nrm));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, uv));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, tan));
+    glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(4, 4, GL_UNSIGNED_BYTE, st, (void*)offsetof(Vertex, bones));
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, weights));
+    glBindVertexArray(0);
+}
+
+// ---- cache em disco
+constexpr uint32_t kCacheMagic = 0x334D4147; // "GAM3"
+
+bool cacheable(const Skeleton* sk, const CharacterModel::LoadOptions& o) {
+    return !sk && !o.boneMap && !o.joints && o.cuts.empty() && o.clear.empty() && !o.keepSource && !CharacterModel::cacheDir.empty();
+}
+
+// Arquivo do cache: muda se o modelo (tamanho/data) ou as opções de carga mudarem.
+std::string cacheFile(const std::string& path, const CharacterModel::LoadOptions& o) {
+    struct stat st {};
+    if (stat(path.c_str(), &st) != 0) return "";
+    char buf[1024];
+    std::snprintf(buf, sizeof(buf), "%s|%lld|%lld|%d|%d|%.4f|%d|%s|%d|%.2f|v3", path.c_str(), (long long)st.st_size,
+                  (long long)st.st_mtime, o.part, o.groundAtZero ? 1 : 0, o.targetHeight, o.maxTextureSize, o.skipMesh.c_str(),
+                  o.fixSkinnedAxes ? 1 : 0, o.chunkSize);
+    char name[32];
+    std::snprintf(name, sizeof(name), "%016zx.gam", std::hash<std::string>()(buf));
+    return CharacterModel::cacheDir + "/" + name;
+}
+
+template <class T> void put(std::ofstream& o, const T& v) { o.write((const char*)&v, sizeof(T)); }
+template <class T> bool get(std::ifstream& in, T& v) { return (bool)in.read((char*)&v, sizeof(T)); }
+template <class T> void putVec(std::ofstream& o, const std::vector<T>& v) {
+    uint64_t n = v.size();
+    put(o, n);
+    if (n) o.write((const char*)v.data(), (std::streamsize)(n * sizeof(T)));
+}
+template <class T> bool getVec(std::ifstream& in, std::vector<T>& v) {
+    uint64_t n;
+    if (!get(in, n) || n > (1ull << 32)) return false;
+    v.resize(n);
+    return n == 0 || (bool)in.read((char*)v.data(), (std::streamsize)(n * sizeof(T)));
+}
+void putStr(std::ofstream& o, const std::string& s) { putVec(o, std::vector<char>(s.begin(), s.end())); }
+bool getStr(std::ifstream& in, std::string& s) {
+    std::vector<char> v;
+    if (!getVec(in, v)) return false;
+    s.assign(v.begin(), v.end());
+    return true;
+}
+
+// Textura como está na placa (já comprimida e com os mipmaps).
+void putTex(std::ofstream& o, GLuint tex) {
+    glBindTexture(GL_TEXTURE_2D, tex);
+    struct Level { int w, h; std::vector<unsigned char> data; };
+    std::vector<Level> lv;
+    GLint fmt = 0, compressed = 0;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_COMPRESSED, &compressed);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    for (int l = 0; l < 16; ++l) {
+        GLint w = 0, h = 0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_WIDTH, &w);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_HEIGHT, &h);
+        if (w <= 0 || h <= 0) break;
+        Level L{w, h, {}};
+        if (compressed) {
+            GLint sz = 0;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_COMPRESSED_IMAGE_SIZE, &sz);
+            L.data.resize(sz);
+            glGetCompressedTexImage(GL_TEXTURE_2D, l, L.data.data());
+        } else {
+            L.data.resize((size_t)w * h * 4);
+            glGetTexImage(GL_TEXTURE_2D, l, GL_RGBA, GL_UNSIGNED_BYTE, L.data.data());
+        }
+        lv.push_back(std::move(L));
+    }
+    put(o, (int32_t)fmt);
+    put(o, (int32_t)compressed);
+    put(o, (int32_t)lv.size());
+    for (const Level& L : lv) {
+        put(o, (int32_t)L.w);
+        put(o, (int32_t)L.h);
+        putVec(o, L.data);
+    }
+}
+
+GLuint getTex(std::ifstream& in) {
+    int32_t fmt, compressed, n;
+    if (!get(in, fmt) || !get(in, compressed) || !get(in, n) || n <= 0 || n > 16) return 0;
+    GLuint t;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    std::vector<unsigned char> data;
+    for (int l = 0; l < n; ++l) {
+        int32_t w, h;
+        if (!get(in, w) || !get(in, h) || !getVec(in, data)) { glDeleteTextures(1, &t); return 0; }
+        if (compressed) glCompressedTexImage2D(GL_TEXTURE_2D, l, fmt, w, h, 0, (GLsizei)data.size(), data.data());
+        else glTexImage2D(GL_TEXTURE_2D, l, fmt, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    }
+    textureParams(n);
+    return t;
+}
+} // namespace
+
+bool CharacterModel::loadCache(const std::string& file, const LoadOptions& opt) {
+    std::ifstream in(file, std::ios::binary);
+    uint32_t magic;
+    if (!in || !get(in, magic) || magic != kCacheMagic) return false;
+    std::vector<Vertex> verts;
+    std::vector<unsigned> idx;
+    uint64_t nm;
+    if (!get(in, boundsMin) || !get(in, boundsMax) || !get(in, hasAlphaCut) || !get(in, chunkSize_) || !getVec(in, verts) ||
+        !getVec(in, idx) || !getVec(in, parts) || !getVec(in, chunks) || !getVec(in, matIds_) || !get(in, nm))
+        return false;
+    for (uint64_t k = 0; k < nm; ++k) {
+        Material m;
+        std::string name;
+        if (!getStr(in, name) || !get(in, m.metallicFactor) || !get(in, m.roughnessFactor) || !get(in, m.emissiveFactor) ||
+            !get(in, m.useOcclusion) || !get(in, m.alphaCut))
+            return false;
+        m.texBase = getTex(in);
+        m.texMR = getTex(in);
+        m.texNormal = getTex(in);
+        m.texEmissive = getTex(in);
+        if (!m.texBase || !m.texMR || !m.texNormal || !m.texEmissive) return false;
+        materials.push_back(m);
+        materialNames.push_back(name);
+    }
+    if (opt.triangles) {
+        opt.triangles->reserve(idx.size());
+        for (unsigned i : idx) opt.triangles->push_back(glm::vec3(verts[i].pos[0], verts[i].pos[1], verts[i].pos[2]));
+    }
+    setupVao(vao_, vbo_, ebo_, verts, idx);
+    indexCount_ = (GLsizei)idx.size();
+    std::printf("[modelo] do cache: %zu vertices, %zu materiais\n", verts.size(), materials.size());
+    return true;
+}
+
+void CharacterModel::saveCache(const std::string& file, const void* vertsData, size_t nVerts, const std::vector<unsigned>& idx) const {
+    std::ofstream o(file + ".tmp", std::ios::binary);
+    if (!o) return;
+    put(o, kCacheMagic);
+    put(o, boundsMin);
+    put(o, boundsMax);
+    put(o, hasAlphaCut);
+    put(o, chunkSize_);
+    const Vertex* v = (const Vertex*)vertsData;
+    putVec(o, std::vector<Vertex>(v, v + nVerts));
+    putVec(o, idx);
+    putVec(o, parts);
+    putVec(o, chunks);
+    putVec(o, matIds_);
+    put(o, (uint64_t)materials.size());
+    for (size_t k = 0; k < materials.size(); ++k) {
+        const Material& m = materials[k];
+        putStr(o, k < materialNames.size() ? materialNames[k] : "");
+        put(o, m.metallicFactor);
+        put(o, m.roughnessFactor);
+        put(o, m.emissiveFactor);
+        put(o, m.useOcclusion);
+        put(o, m.alphaCut);
+        putTex(o, m.texBase);
+        putTex(o, m.texMR);
+        putTex(o, m.texNormal);
+        putTex(o, m.texEmissive);
+    }
+    o.close();
+    if (o) std::rename((file + ".tmp").c_str(), file.c_str());
+}
+
 bool CharacterModel::load(const std::string& path, const Skeleton* sk, const LoadOptions& opt) {
     // FlipUVs desfaz a inversão que o importador glTF do Assimp aplica -> UVs no padrão glTF.
     const unsigned flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_GenSmoothNormals | aiProcess_FlipUVs;
+    // já processado antes: vem do cache em disco (não abre o arquivo nem decodifica textura)
+    const std::string cache = cacheable(sk, opt) ? cacheFile(path, opt) : "";
+    if (!cache.empty()) {
+        if (loadCache(cache, opt)) return true;
+        reset(); // cache velho ou estragado: carrega do arquivo
+    }
     Assimp::Importer local;
     Assimp::Importer* imp = &local;
     OpenFile& of = openFile();
@@ -754,30 +1058,9 @@ bool CharacterModel::load(const std::string& path, const Skeleton* sk, const Loa
         g_decoded = nullptr;
     }
 
-    glGenVertexArrays(1, &vao_);
-    glGenBuffers(1, &vbo_);
-    glGenBuffers(1, &ebo_);
-    glBindVertexArray(vao_);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
-    const GLsizei st = sizeof(Vertex);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, pos));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, nrm));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, uv));
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, tan));
-    glEnableVertexAttribArray(4);
-    glVertexAttribIPointer(4, 4, GL_UNSIGNED_BYTE, st, (void*)offsetof(Vertex, bones));
-    glEnableVertexAttribArray(5);
-    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, st, (void*)offsetof(Vertex, weights));
-    glBindVertexArray(0);
+    setupVao(vao_, vbo_, ebo_, verts, idx);
     indexCount_ = (GLsizei)idx.size();
-
+    if (!cache.empty()) saveCache(cache, verts.data(), verts.size(), idx);
     return true;
 }
 

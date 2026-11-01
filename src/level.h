@@ -1,6 +1,7 @@
 #pragma once
 #include "arena.h"
 #include "character_model.h"
+#include "cloth.h"
 #include "physics.h"
 #include "renderer.h"
 #include "table.h"
@@ -77,11 +78,13 @@ struct LightPlace {
     float range = 8.0f;     // alcance (m)
     float inner = 25.0f, outer = 40.0f; // spot: cone (graus, metade da abertura)
     float size = 1.0f;      // área: lado do painel (m)
+    bool shadow = true;     // o personagem (e quem mais se mexe) faz sombra com essa luz
     glm::vec3 dir() const { return {std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw)}; }
 };
 
 struct LevelLayout {
     std::vector<PropPlace> props;                             // objetos com malha, na ordem de montagem
+    bool sceneMap = false;                                    // veio de um layout que tirou o mapa ("nomap")
     std::map<int, std::pair<glm::vec3, glm::vec3>> boxes;     // caixas visíveis movidas (índice em World::boxes)
     bool hasDoor = false;
     glm::vec3 doorHinge{0.0f};
@@ -90,6 +93,7 @@ struct LevelLayout {
     std::vector<DoorPlace> allDoors() const;                  // a principal (se houver) + as outras
     std::vector<LightPlace> lights;                           // luzes postas pelo editor
     std::vector<StainPlace> stains;                           // pintura nos modelos (sujeira, manchas)
+    std::vector<ClothPlace> cloths;                           // tecidos (cortinas, toalhas, bandeiras)
     std::vector<glm::vec3> spawns;                            // inimigos
     std::vector<float> spawnYaw;
     std::map<int, std::pair<glm::vec3, float>> guns;          // arma i posta no chão pelo editor (posição, giro)

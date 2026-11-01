@@ -54,6 +54,10 @@ add_executable(ga
   src/free_editor.cpp
   src/anim_editor.cpp
   src/terrain.cpp
+  src/cloth.cpp
+  src/cinematic.cpp
+  src/mocap_live.cpp
+  src/qrcode.cpp
   src/soldiers.cpp
   src/builder.cpp
   src/loadout.cpp

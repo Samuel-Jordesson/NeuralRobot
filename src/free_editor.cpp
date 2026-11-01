@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -54,6 +55,7 @@ void FreeEditor::begin(const glm::vec3& camPos, float yaw, float pitch, const st
     yaw_ = yaw;
     pitch_ = pitch;
     root_ = root;
+    layout_.init(root + "/editor_cenario.ini", 0.22f, 0.19f, 0.34f);
     kind_ = None;
     idx_ = -1;
     mode_ = 0;
@@ -160,6 +162,7 @@ glm::vec3 FreeEditor::selPos(Context& c) const {
     case Box: return (c.world.boxes[idx_].min + c.world.boxes[idx_].max) * 0.5f;
     case DoorSel: return c.layout.doorHinge;
     case ExtraDoor: return c.layout.extraDoors[idx_].hinge;
+    case ClothSel: return c.layout.cloths[idx_].pos;
     case Spawn: return c.layout.spawns[idx_];
     case Start: return c.layout.start;
     case Light: return c.layout.lights[idx_].pos;
@@ -178,6 +181,7 @@ std::string FreeEditor::selName(const Context& c) const {
     case Box: std::snprintf(buf, sizeof(buf), "Bloco %d", idx_); return buf;
     case DoorSel: return "Porta";
     case ExtraDoor: std::snprintf(buf, sizeof(buf), "Porta %d", idx_ + 2); return buf;
+    case ClothSel: std::snprintf(buf, sizeof(buf), "Tecido %d", idx_ + 1); return buf;
     case Spawn: std::snprintf(buf, sizeof(buf), "Inimigo %d", idx_ + 1); return buf;
     case Start: return "Início do personagem";
     case Gun: return idx_ < (int)c.gunNames.size() ? "Arma: " + c.gunNames[idx_] : "Arma";
@@ -190,7 +194,16 @@ std::string FreeEditor::selName(const Context& c) const {
     }
 }
 
-void FreeEditor::pick(const Ray& r, Context& c) {
+// Tecido: matriz (posição + giro) e caixa no espaço dele (pendurado desce da borda; solto fica deitado).
+static glm::mat4 clothFrame(const ClothPlace& cl) {
+    return glm::translate(glm::mat4(1.0f), cl.pos) * glm::rotate(glm::mat4(1.0f), cl.yaw, glm::vec3(0, 1, 0));
+}
+static void clothBox(const ClothPlace& cl, glm::vec3& lo, glm::vec3& hi) {
+    if (cl.pin == 3) { lo = {-cl.width * 0.5f, -0.05f, -cl.height * 0.5f}; hi = {cl.width * 0.5f, 0.05f, cl.height * 0.5f}; }
+    else { lo = {-cl.width * 0.5f, -cl.height, -0.06f}; hi = {cl.width * 0.5f, 0.0f, 0.06f}; }
+}
+
+void FreeEditor::pick(const Ray& r, Context& c, bool add) {
     float best = 1e30f, bestInside = 1e30f;
     Kind bk = None, bkIn = None;
     int bi = -1, biIn = -1;
@@ -226,6 +239,14 @@ void FreeEditor::pick(const Ray& r, Context& c) {
         bool in = false;
         consider(ExtraDoor, (int)i, rayBox(o, dd, glm::vec3(0, 0, -0.12f), glm::vec3(d.width, d.height, 0.12f), in), in);
     }
+    for (size_t i = 0; i < c.layout.cloths.size(); ++i) { // tecidos
+        const ClothPlace& cl = c.layout.cloths[i];
+        glm::mat4 inv = glm::inverse(clothFrame(cl));
+        glm::vec3 o = glm::vec3(inv * glm::vec4(r.o, 1.0f)), dd = glm::vec3(inv * glm::vec4(r.d, 0.0f)), lo, hi;
+        clothBox(cl, lo, hi);
+        bool in = false;
+        consider(ClothSel, (int)i, rayBox(o, dd, lo, hi, in), in);
+    }
     auto marker = [&](Kind k, int i, const glm::vec3& p) {
         bool in = false;
         consider(k, i, rayBox(r.o, r.d, p - glm::vec3(0.35f, 0.0f, 0.35f), p + glm::vec3(0.35f, 1.8f, 0.35f), in), false);
@@ -244,9 +265,90 @@ void FreeEditor::pick(const Ray& r, Context& c) {
     }
     // de dentro de uma sala (a caixa dela envolve a câmera) só seleciona se não acertou mais nada
     if (bk == None) { bk = bkIn; bi = biIn; }
+    if (add) { // Shift + clique: junta (ou tira) da seleção
+        if (bk != None) toggleSel(bk, bi);
+        status_ = kind_ == None ? "Nada selecionado"
+                                : std::to_string(1 + extra_.size()) + " selecionados (Shift + clique junta ou tira; G/R/S e Delete valem para todos)";
+        return;
+    }
+    extra_.clear();
     kind_ = bk;
     idx_ = bi;
-    status_ = kind_ == None ? "Nada selecionado" : "Selecionado: " + selName(c) + "  (G mover, R girar, S escala)";
+    status_ = kind_ == None ? "Nada selecionado" : "Selecionado: " + selName(c) + "  (G mover, R girar, S escala; Shift + clique junta mais)";
+}
+
+bool FreeEditor::isSel(Kind k, int i) const {
+    if (kind_ == k && idx_ == i) return true;
+    for (const SelItem& e : extra_)
+        if (e.k == k && e.i == i) return true;
+    return false;
+}
+
+void FreeEditor::toggleSel(Kind k, int i) {
+    if (kind_ == None) { kind_ = k; idx_ = i; return; }
+    if (kind_ == k && idx_ == i) { // tirou o principal: o próximo vira principal
+        if (extra_.empty()) { kind_ = None; idx_ = -1; }
+        else { kind_ = extra_.front().k; idx_ = extra_.front().i; extra_.erase(extra_.begin()); }
+        return;
+    }
+    for (size_t j = 0; j < extra_.size(); ++j)
+        if (extra_[j].k == k && extra_[j].i == i) { extra_.erase(extra_.begin() + j); return; }
+    SelItem e;
+    e.k = k;
+    e.i = i;
+    extra_.push_back(e);
+}
+
+void FreeEditor::forEachSel(const std::function<void()>& f) {
+    const Kind k0 = kind_;
+    const int i0 = idx_;
+    f(); // o principal usa os próprios campos (pos0_, yaw0_...)
+    SelItem mine{k0, i0, pos0_, bmin0_, bmax0_, yaw0_, scale0_, pivot0_};
+    for (SelItem& e : extra_) {
+        kind_ = e.k; idx_ = e.i; pos0_ = e.pos0; bmin0_ = e.bmin0; bmax0_ = e.bmax0; yaw0_ = e.yaw0; scale0_ = e.scale0; pivot0_ = e.pivot0;
+        f();
+        e.pos0 = pos0_; e.bmin0 = bmin0_; e.bmax0 = bmax0_; e.yaw0 = yaw0_; e.scale0 = scale0_; e.pivot0 = pivot0_;
+    }
+    kind_ = mine.k; idx_ = mine.i; pos0_ = mine.pos0; bmin0_ = mine.bmin0; bmax0_ = mine.bmax0; yaw0_ = mine.yaw0;
+    scale0_ = mine.scale0; pivot0_ = mine.pivot0;
+}
+
+// Tira da seleção o que deixou de existir (apagado, cenário refeito).
+void FreeEditor::validateSel(Context& c) {
+    auto valid = [&](Kind k, int i) {
+        switch (k) {
+        case Prop: return i < (int)c.layout.props.size();
+        case Box: return i < (int)c.world.boxes.size();
+        case Spawn: return i < (int)c.layout.spawns.size();
+        case ExtraDoor: return i < (int)c.layout.extraDoors.size();
+        case ClothSel: return i < (int)c.layout.cloths.size();
+        case Light: return i < (int)c.layout.lights.size();
+        case Gun: return i < (int)c.gunPos.size();
+        default: return true;
+        }
+    };
+    if (kind_ == None) { extra_.clear(); return; }
+    extra_.erase(std::remove_if(extra_.begin(), extra_.end(), [&](const SelItem& e) { return e.i < 0 || !valid(e.k, e.i) || (e.k == kind_ && e.i == idx_); }),
+                 extra_.end());
+}
+
+// Apaga todos os selecionados (do índice maior para o menor, para não trocar os de trás).
+bool FreeEditor::removeGroup(Context& c) {
+    if (extra_.empty()) return removeSelected(c);
+    std::vector<std::pair<Kind, int>> all{{kind_, idx_}};
+    for (const SelItem& e : extra_) all.push_back({e.k, e.i});
+    std::sort(all.begin(), all.end(), [](auto& a, auto& b) { return a.first != b.first ? a.first < b.first : a.second > b.second; });
+    extra_.clear();
+    int n = 0;
+    for (auto& [k, i] : all) {
+        kind_ = k;
+        idx_ = i;
+        n += removeSelected(c) ? 1 : 0;
+    }
+    kind_ = None;
+    idx_ = -1;
+    status_ = "Removidos: " + std::to_string(n) + " (os fixos do cenário ficam)";
+    return n > 0;
 }
 
 void FreeEditor::startGesture(int mode, GLFWwindow* win, Context& c, int fbw, int fbh) {
@@ -258,7 +360,12 @@ void FreeEditor::startGesture(int mode, GLFWwindow* win, Context& c, int fbw, in
     mode_ = mode;
     axis_ = -1;
     glfwGetCursorPos(win, &mx0_, &my0_);
-    captureSel(c);
+    groupCapture(c);
+    { // centro do grupo (média das posições do começo)
+        glm::vec3 sum = pos0_;
+        for (const SelItem& e : extra_) sum += e.pos0;
+        groupPivot_ = sum / float(1 + extra_.size());
+    }
     Ray r = mouseRay(win, fbw, fbh);
     hit0_ = std::fabs(r.d.y) > 1e-4f ? r.o + r.d * ((pos0_.y - r.o.y) / r.d.y) : pos0_;
     const char* names[] = {"", "Movendo", "Girando", "Escala"};
@@ -270,7 +377,7 @@ void FreeEditor::captureSel(Context& c) {
     if (kind_ == Prop) {
         yaw0_ = c.layout.props[idx_].yaw;
         scale0_ = c.layout.props[idx_].scale;
-        pivot0_ = glm::inverse(c.layout.props[idx_].matrix()) * c.props[idx_].model;
+        pivot0_ = idx_ < (int)c.props.size() ? glm::inverse(c.layout.props[idx_].matrix()) * c.props[idx_].model : glm::mat4(1.0f);
     } else if (kind_ == Spawn) yaw0_ = c.layout.spawnYaw[idx_];
     else if (kind_ == Start) yaw0_ = c.layout.startYaw;
     else if (kind_ == Gun) {
@@ -279,6 +386,7 @@ void FreeEditor::captureSel(Context& c) {
     } else if (kind_ == Box) { bmin0_ = c.world.boxes[idx_].min; bmax0_ = c.world.boxes[idx_].max; }
     else if (kind_ == DoorSel) scale0_ = c.layout.doorWidth;
     else if (kind_ == Light) { yaw0_ = c.layout.lights[idx_].yaw; scale0_ = c.layout.lights[idx_].range; }
+    else if (kind_ == ClothSel) { yaw0_ = c.layout.cloths[idx_].yaw; scale0_ = c.layout.cloths[idx_].width; bmin0_.x = c.layout.cloths[idx_].height; }
 }
 
 void FreeEditor::moveSel(Context& c, const glm::vec3& delta) {
@@ -298,6 +406,7 @@ void FreeEditor::moveSel(Context& c, const glm::vec3& delta) {
     case Start: c.layout.start = p; break;
     case Gun: c.layout.guns[idx_] = {p, yaw0_}; break;
     case ExtraDoor: c.layout.extraDoors[idx_].hinge = p; break;
+    case ClothSel: c.layout.cloths[idx_].pos = p; break;
     case Light: c.layout.lights[idx_].pos = p; break;
     default: break;
     }
@@ -359,7 +468,7 @@ bool FreeEditor::gizmoParam(const Ray& r, int axis, glm::vec3& out) const {
 }
 
 void FreeEditor::livePropModel(Context& c) {
-    if (kind_ == Prop) c.props[idx_].model = c.layout.props[idx_].matrix(pivot0_);
+    if (kind_ == Prop && idx_ < (int)c.props.size()) c.props[idx_].model = c.layout.props[idx_].matrix(pivot0_);
 }
 
 void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
@@ -378,14 +487,25 @@ void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
             if (axis_ == 0) delta.z = 0.0f;
             if (axis_ == 2) delta.x = 0.0f;
         }
-        moveSel(c, delta);
-    } else if (mode_ == 2) {
-        float yaw = yaw0_ + (float)(mx - mx0_) * 0.01f;
+        groupMove(c, delta);
+        return;
+    }
+    forEachSel([&] { // girar e escala: cada selecionado a partir do próprio estado
+    if (mode_ == 2) {
+        const float da = (float)(mx - mx0_) * 0.01f;
+        float yaw = yaw0_ + da;
+        // vários selecionados: giram juntos em volta do centro do grupo (mudam de lugar e de direção)
+        glm::vec3 np = pos0_;
+        if (!extra_.empty()) {
+            np = groupPivot_ + glm::vec3(glm::rotate(glm::mat4(1.0f), da, glm::vec3(0, 1, 0)) * glm::vec4(pos0_ - groupPivot_, 0.0f));
+            moveSel(c, np - pos0_);
+        }
         if (kind_ == Prop) { c.layout.props[idx_].yaw = yaw; livePropModel(c); }
         else if (kind_ == Spawn) c.layout.spawnYaw[idx_] = yaw;
         else if (kind_ == Start) c.layout.startYaw = yaw;
-        else if (kind_ == Gun) c.layout.guns[idx_] = {pos0_, yaw};
+        else if (kind_ == Gun) c.layout.guns[idx_] = {np, yaw};
         else if (kind_ == Light) c.layout.lights[idx_].yaw = yaw;
+        else if (kind_ == ClothSel) c.layout.cloths[idx_].yaw = yaw;
     } else if (mode_ == 3) {
         float f = std::exp((float)(mx - mx0_) * 0.005f);
         if (kind_ == Prop) { c.layout.props[idx_].scale = std::max(0.01f, scale0_ * f); livePropModel(c); }
@@ -397,6 +517,11 @@ void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
             c.world.boxes[idx_].min = ctr - nh;
             c.world.boxes[idx_].max = ctr + nh;
             c.layout.boxes[idx_] = {c.world.boxes[idx_].min, c.world.boxes[idx_].max};
+        } else if (kind_ == ClothSel) { // S: tamanho (mantém a proporção)
+            ClothPlace& cl = c.layout.cloths[idx_];
+            float k = std::clamp(scale0_ * f, 0.2f, 12.0f) / std::max(0.01f, cl.width);
+            cl.width *= k;
+            cl.height *= k;
         } else if (kind_ == Light) {
             c.layout.lights[idx_].range = std::clamp(scale0_ * f, 0.3f, 80.0f); // S: alcance
         } else if (kind_ == DoorSel) {
@@ -404,6 +529,7 @@ void FreeEditor::applyGesture(GLFWwindow* win, Context& c, int fbw, int fbh) {
             if (c.door) c.door->width = c.layout.doorWidth;
         }
     }
+    });
 }
 
 void FreeEditor::restore(Context& c) {
@@ -428,6 +554,7 @@ void FreeEditor::restore(Context& c) {
     case Start: c.layout.start = pos0_; c.layout.startYaw = yaw0_; break;
     case Gun: c.layout.guns[idx_] = {pos0_, yaw0_}; break;
     case ExtraDoor: c.layout.extraDoors[idx_].hinge = pos0_; break;
+    case ClothSel: c.layout.cloths[idx_].pos = pos0_; c.layout.cloths[idx_].yaw = yaw0_; c.layout.cloths[idx_].width = scale0_; c.layout.cloths[idx_].height = bmin0_.x; break;
     case Light:
         c.layout.lights[idx_].pos = pos0_;
         c.layout.lights[idx_].yaw = yaw0_;
@@ -494,7 +621,7 @@ bool FreeEditor::duplicateSelected(Context& c) {
         while (c.layout.prop(p.name));
         c.layout.props.push_back(p);
         // aparece já (mesma malha); a colisão vem ao confirmar
-        RenderScene::Prop rp = c.props[idx_];
+        RenderScene::Prop rp = idx_ < (int)c.props.size() ? c.props[idx_] : RenderScene::Prop{nullptr, p.matrix()};
         c.props.push_back(rp);
         c.propMeshes.push_back(idx_ < (int)c.propMeshes.size() ? c.propMeshes[idx_] : nullptr);
         c.propTris.push_back(idx_ < (int)c.propTris.size() ? c.propTris[idx_] : nullptr);
@@ -502,6 +629,9 @@ bool FreeEditor::duplicateSelected(Context& c) {
     } else if (kind_ == ExtraDoor) {
         c.layout.extraDoors.push_back(c.layout.extraDoors[idx_]);
         idx_ = (int)c.layout.extraDoors.size() - 1;
+    } else if (kind_ == ClothSel) {
+        c.layout.cloths.push_back(c.layout.cloths[idx_]);
+        idx_ = (int)c.layout.cloths.size() - 1;
     } else if (kind_ == Light) {
         c.layout.lights.push_back(c.layout.lights[idx_]);
         idx_ = (int)c.layout.lights.size() - 1;
@@ -518,6 +648,35 @@ bool FreeEditor::duplicateSelected(Context& c) {
     return true;
 }
 
+// Duplica todos os selecionados; as cópias viram a nova seleção (e saem juntas no mouse).
+bool FreeEditor::duplicateGroup(Context& c) {
+    if (extra_.empty()) return duplicateSelected(c);
+    std::vector<std::pair<Kind, int>> all{{kind_, idx_}};
+    for (const SelItem& e : extra_) all.push_back({e.k, e.i});
+    std::vector<std::pair<Kind, int>> copies;
+    for (auto& [k, i] : all) {
+        kind_ = k;
+        idx_ = i;
+        if (duplicateSelected(c)) copies.push_back({kind_, idx_}); // idx_ agora é o da cópia
+    }
+    extra_.clear();
+    if (copies.empty()) {
+        kind_ = all[0].first;
+        idx_ = all[0].second;
+        return false;
+    }
+    kind_ = copies[0].first;
+    idx_ = copies[0].second;
+    for (size_t j = 1; j < copies.size(); ++j) {
+        SelItem e;
+        e.k = copies[j].first;
+        e.i = copies[j].second;
+        extra_.push_back(e);
+    }
+    status_ = "Duplicados: " + std::to_string(copies.size()) + " - mova e clique para soltar";
+    return true;
+}
+
 bool FreeEditor::removeSelected(Context& c) {
     if (kind_ == Prop && !c.layout.props[idx_].asset.empty()) {
         c.layout.props.erase(c.layout.props.begin() + idx_);
@@ -528,6 +687,8 @@ bool FreeEditor::removeSelected(Context& c) {
         c.layout.lights.erase(c.layout.lights.begin() + idx_);
     } else if (kind_ == ExtraDoor) {
         c.layout.extraDoors.erase(c.layout.extraDoors.begin() + idx_);
+    } else if (kind_ == ClothSel) {
+        c.layout.cloths.erase(c.layout.cloths.begin() + idx_);
     } else if (kind_ == Gun && c.layout.guns.count(idx_)) {
         c.layout.guns.erase(idx_); // volta ao lugar de fábrica
     } else {
@@ -543,7 +704,7 @@ bool FreeEditor::removeSelected(Context& c) {
 
 FreeEditor::Rect FreeEditor::viewRect(float W, float H) const {
     const float top = std::max(56.0f, H * 0.068f);
-    return {std::min(W * 0.22f, 380.0f), top, W - std::min(W * 0.19f, 330.0f), H - std::max(250.0f, H * 0.34f)};
+    return {layout_.l * W, top, W * (1.0f - layout_.r), H * (1.0f - layout_.b)};
 }
 
 glm::mat4 FreeEditor::viewportFix(float W, float H, float fullAspect) const {
@@ -635,6 +796,14 @@ bool FreeEditor::surfaceHit(const Ray& r, Context& c, glm::vec3& pos, glm::vec3&
 FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int fbw, int fbh, glm::mat4& view,
                                       glm::mat4& proj, glm::vec3& camPos) {
     Result res = Result::None;
+    validateSel(c);
+    if (const char* dp = getenv("GA_DUP")) { // depuração: "quadro" duplica a seleção nesse quadro
+        static int fr = 0;
+        if (++fr == std::atoi(dp) && kind_ != None) {
+            bool ok = duplicateGroup(c);
+            std::printf("[dup] ok=%d seleção agora %zu, objetos no layout %zu\n", ok, 1 + extra_.size(), c.layout.props.size());
+        }
+    }
     ImGuiIO& io = ImGui::GetIO();
     auto pressed = [&](int k) {
         bool d = keyDown(win, k), p = d && !prevKey_[k];
@@ -646,15 +815,28 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
     bool lmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     const bool rmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     bool lmbPress = lmb && !lmbWas_, rmbPress = rmb && !rmbWas_;
-    if (const char* ck = getenv("GA_CLICK")) { // depuração: "quadro x y" clica na vista nesse quadro
+    bool fakeShift = false;
+    if (const char* ck = getenv("GA_CLICK")) { // depuração: "quadro x y [s]" clica na vista (s = com Shift); vários com ';'
         static int fr = 0;
-        int at = 0;
-        float cx, cy;
-        if (std::sscanf(ck, "%d %f %f", &at, &cx, &cy) == 3 && ++fr == at) {
-            mx = cx;
-            my = cy;
-            lmbPress = true;
-            viewHovered_ = true;
+        ++fr;
+        std::string all = ck;
+        size_t a = 0;
+        while (a <= all.size()) {
+            size_t b = all.find(';', a);
+            std::string one = all.substr(a, b == std::string::npos ? std::string::npos : b - a);
+            int at = 0;
+            float cx, cy;
+            char sh = 0;
+            int n = std::sscanf(one.c_str(), "%d %f %f %c", &at, &cx, &cy, &sh);
+            if (n >= 3 && fr == at) {
+                mx = cx;
+                my = cy;
+                lmbPress = true;
+                viewHovered_ = true;
+                fakeShift = n == 4 && sh == 's';
+            }
+            if (b == std::string::npos) break;
+            a = b + 1;
         }
     }
     fakeMouse_ = false;
@@ -755,7 +937,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
             glm::perspective(glm::radians(60.0f), rw / std::max(1.0f, rh), 0.05f, 1000.0f);
     (void)fbw;
     (void)fbh;
-    const bool inView = viewHovered_ && mx >= vr.x0 && mx <= vr.x1 && my >= vr.y0 && my <= vr.y1;
+    const bool inView = viewHovered_ && !layout_.dragging() && mx >= vr.x0 && mx <= vr.x1 && my >= vr.y0 && my <= vr.y1;
 
     // gestos estilo Blender
     if (mode_ == 0) {
@@ -804,7 +986,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
                     if (gizmoParam(mouseRay(win, fbw, fbh), gizmoAxis_, now)) {
                         glm::vec3 d = now - gizmoHit0_;
                         if (gizmoAxis_ == 3) d.y = 0.0f;
-                        moveSel(c, d);
+                        groupMove(c, d);
                     }
                 } else { // soltou: confirma
                     gizmoAxis_ = -1;
@@ -813,19 +995,20 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
                     res = Result::Rebuild;
                 }
             } else if (lmbPress && inView && gizmoHover_ >= 0) {
-                captureSel(c);
+                groupCapture(c);
                 if (gizmoParam(mouseRay(win, fbw, fbh), gizmoHover_, gizmoHit0_)) {
                     gizmoAxis_ = gizmoHover_;
                     const char* nm[] = {"X", "altura", "Z", "chão"};
                     status_ = std::string("Movendo em ") + nm[gizmoAxis_] + " (solte para confirmar)";
                 }
-            } else if (lmbPress && inView) pick(mouseRay(win, fbw, fbh), c);
+            } else if (lmbPress && inView)
+                pick(mouseRay(win, fbw, fbh), c, fakeShift || keyDown(win, GLFW_KEY_LEFT_SHIFT) || keyDown(win, GLFW_KEY_RIGHT_SHIFT));
         }
-        if (pressed(GLFW_KEY_ESCAPE)) { kind_ = None; idx_ = -1; status_ = "Nada selecionado"; }
-        if (pressed(GLFW_KEY_DELETE) && kind_ != None && removeSelected(c)) res = Result::Rebuild;
+        if (pressed(GLFW_KEY_ESCAPE)) { kind_ = None; idx_ = -1; extra_.clear(); status_ = "Nada selecionado"; }
+        if (pressed(GLFW_KEY_DELETE) && kind_ != None && removeGroup(c)) res = Result::Rebuild;
         // Shift+D: duplica e a cópia já sai grudada no mouse (clique solta, botão direito desiste da posição)
         const bool shift = keyDown(win, GLFW_KEY_LEFT_SHIFT) || keyDown(win, GLFW_KEY_RIGHT_SHIFT);
-        if (pressed(GLFW_KEY_D) && shift && !rmb && !paintMode_ && kind_ != None && duplicateSelected(c))
+        if (pressed(GLFW_KEY_D) && shift && !rmb && !paintMode_ && kind_ != None && duplicateGroup(c))
             startGesture(1, win, c, fbw, fbh);
         if (pressed(GLFW_KEY_F) && !rmb && kind_ != None) { // foca no selecionado
             glm::vec3 p = selPos(c);
@@ -842,7 +1025,7 @@ FreeEditor::Result FreeEditor::update(GLFWwindow* win, float dt, Context& c, int
             status_ = "Pronto: " + selName(c) + " (lembre de salvar)";
             res = Result::Rebuild;
         } else if (rmbPress || pressed(GLFW_KEY_ESCAPE)) { // cancela
-            restore(c);
+            groupRestore(c);
             mode_ = 0;
             status_ = "Cancelado";
         }
@@ -894,6 +1077,7 @@ void FreeEditor::scanAssets(const Context& c) {
     };
     assetList_.push_back({"@porta", "Porta", 1, -1}); // porta de madeira que abre empurrando
     assetList_.push_back({"@porta_vidro", "Porta de vidro", 1, -1}); // vidro com moldura de alumínio
+    assetList_.push_back({"@tecido", "Tecido", 1, -1});              // pano com física (cortina, toalha, bandeira)
     // luzes (as do Blender + ambiente)
     assetList_.push_back({"@luz_ponto", "Luz pontual", 6, -1});
     assetList_.push_back({"@luz_spot", "Luz spot", 6, -1});
@@ -939,6 +1123,17 @@ bool FreeEditor::placeAsset(const Asset& a, const glm::vec3& pos, Context& c) {
         idx_ = (int)c.layout.lights.size() - 1;
         dirty_ = true;
         status_ = "Luz posta: " + a.name + " (ajuste cor, força e alcance nos detalhes)";
+        return true;
+    }
+    if (a.rel == "@tecido") { // cortina de frente para a câmera, com a borda de cima a 2,7 m do chão onde soltou
+        ClothPlace cl;
+        cl.yaw = yaw_ + 3.14159265f;
+        cl.pos = pos + glm::vec3(0.0f, cl.height + 0.2f, 0.0f);
+        c.layout.cloths.push_back(cl);
+        kind_ = ClothSel;
+        idx_ = (int)c.layout.cloths.size() - 1;
+        dirty_ = true;
+        status_ = "Tecido posto: escolha como fica preso, a física e a textura nos detalhes";
         return true;
     }
     if (a.rel == "@porta" || a.rel == "@porta_vidro") { // folha de frente para a câmera, centrada onde soltou
@@ -1240,17 +1435,22 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
     ImGui::PushItemWidth(-90.0f);
     if (kind_ != None) {
         ImGui::TextColored(kAccentV, "%s", selName(c).c_str());
+        if (!extra_.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "+ %zu selecionados (G/R/S e Delete valem para todos; Shift + clique tira)",
+                               extra_.size());
         if (kind_ == Prop) {
             PropPlace& p = c.layout.props[idx_];
             if (!p.asset.empty()) ImGui::TextDisabled("%s", p.asset.c_str());
-            pivot0_ = glm::inverse(p.matrix()) * c.props[idx_].model;
+            // recém-posto: ainda não está na lista de desenho (entra no próximo quadro)
+            const bool drawn = idx_ < (int)c.props.size();
+            pivot0_ = drawn ? glm::inverse(p.matrix()) * c.props[idx_].model : glm::mat4(1.0f);
             if (section("Transformação")) {
                 float yawDeg = glm::degrees(p.yaw);
                 track(ImGui::DragFloat3("Posição", &p.pos.x, 0.01f));
                 track(ImGui::DragFloat("Giro (°)", &yawDeg, 0.5f));
                 track(ImGui::DragFloat("Escala", &p.scale, 0.005f, 0.001f, 100.0f));
                 p.yaw = glm::radians(yawDeg);
-                if (edited) c.props[idx_].model = p.matrix(pivot0_);
+                if (edited && drawn) c.props[idx_].model = p.matrix(pivot0_);
             }
             CharacterModel* m = idx_ < (int)c.propMeshes.size() ? c.propMeshes[idx_] : nullptr;
             if (m && !m->materials.empty() && section("Materiais")) {
@@ -1320,6 +1520,42 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
                 if (edited && c.door) { c.door->hinge = c.layout.doorHinge; c.door->width = c.layout.doorWidth; c.door->height = c.layout.doorHeight; }
                 ImGui::TextDisabled("No oficial o vão é recortado de novo nas paredes.");
             }
+        } else if (kind_ == ClothSel) {
+            ClothPlace& cl = c.layout.cloths[idx_];
+            if (section("Tecido")) {
+                track(ImGui::DragFloat3("Posição", &cl.pos.x, 0.01f));
+                float yawDeg = glm::degrees(cl.yaw);
+                track(ImGui::DragFloat("Giro (°)", &yawDeg, 0.5f));
+                cl.yaw = glm::radians(yawDeg);
+                track(ImGui::DragFloat("Largura (m)", &cl.width, 0.01f, 0.2f, 12.0f));
+                track(ImGui::DragFloat("Altura (m)", &cl.height, 0.01f, 0.2f, 12.0f));
+                static const char* pins[] = {"Borda de cima presa (cortina)", "Só os cantos de cima", "Borda da esquerda (bandeira)",
+                                             "Solto (cai e cobre o que estiver embaixo)"};
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo("##preso", &cl.pin, pins, 4)) finished = true;
+            }
+            if (section("Física")) {
+                if (ImGui::Checkbox("Física ligada", &cl.physics)) finished = true;
+                track(ImGui::SliderFloat("Rigidez", &cl.stiffness, 0.0f, 1.0f, "%.2f"));
+                track(ImGui::SliderFloat("Dobra (duro)", &cl.bend, 0.0f, 1.0f, "%.2f"));
+                track(ImGui::SliderFloat("Peso (kg/m²)", &cl.mass, 0.05f, 3.0f, "%.2f", ImGuiSliderFlags_Logarithmic));
+                track(ImGui::SliderFloat("Amortecer", &cl.damping, 0.0f, 0.3f, "%.2f"));
+                track(ImGui::SliderFloat("Vento", &cl.windResponse, 0.0f, 3.0f, "%.2f"));
+                ImGui::TextDisabled("O vento se liga em Configurações > Vento.");
+                if (ImGui::Button("Reiniciar tecido", ImVec2(-1, 0))) finished = true;
+            }
+            if (section("Textura")) {
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::BeginCombo("##textecido", cl.texture.empty() ? "(tecido padrão)" : cl.texture.c_str())) {
+                    if (ImGui::Selectable("(tecido padrão)", cl.texture.empty())) { cl.texture.clear(); finished = true; }
+                    for (const std::string& img : images_)
+                        if (ImGui::Selectable(img.c_str(), img == cl.texture)) { cl.texture = img; finished = true; }
+                    ImGui::EndCombo();
+                }
+                track(ImGui::SliderFloat("Repetir a cada (m)", &cl.tile, 0.1f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic));
+                if (ImGui::Button("Importar textura (png/jpg)...", ImVec2(-1, 0))) startImport(true);
+            }
+            if (ImGui::Button("Remover (Delete)", ImVec2(-1, 0)) && removeSelected(c)) res = Result::Rebuild;
         } else if (kind_ == ExtraDoor) {
             DoorPlace& d = c.layout.extraDoors[idx_];
             if (section("Porta")) {
@@ -1367,6 +1603,12 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
                 track(ImGui::ColorEdit3("Cor", &li.color.x));
                 track(ImGui::DragFloat("Força", &li.intensity, 0.05f, 0.0f, 500.0f, "%.2f"));
                 if (li.type != LightPlace::Sun) track(ImGui::DragFloat("Alcance (m)", &li.range, 0.05f, 0.3f, 80.0f, "%.1f"));
+                if (li.type == LightPlace::Point || li.type == LightPlace::Spot || li.type == LightPlace::Area) {
+                    if (ImGui::Checkbox("Faz sombra (personagens)", &li.shadow)) finished = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("O personagem, os inimigos, as armas e os tecidos fazem sombra com essa luz.\n"
+                                          "Até 4 luzes com sombra ao mesmo tempo (as mais perto da câmera).");
+                }
                 if (li.type == LightPlace::Spot || li.type == LightPlace::Sun || li.type == LightPlace::Area) {
                     float yawDeg = glm::degrees(li.yaw), pitchDeg = glm::degrees(li.pitch);
                     track(ImGui::DragFloat("Giro (°)", &yawDeg, 0.5f));
@@ -1383,7 +1625,7 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
                                     : li.type == LightPlace::Sun ? "Luz de longe numa direção, vale para o cenário todo."
                                     : li.type == LightPlace::Area ? "Painel que ilumina para a frente; maior = luz mais macia."
                                     : li.type == LightPlace::Spot ? "Cone de luz (lanterna, luminária)." : "Lâmpada: ilumina para todo lado.");
-                if (ImGui::Button("Duplicar (Shift+D)")) duplicateSelected(c);
+                if (ImGui::Button("Duplicar (Shift+D)")) duplicateGroup(c);
                 ImGui::SameLine();
                 if (ImGui::Button("Remover (Delete)") && removeSelected(c)) res = Result::Rebuild;
                 if (edited) dirty_ = true;
@@ -1467,8 +1709,14 @@ void FreeEditor::drawDetails(Context& c, Result& res, const Rect& r) {
 void FreeEditor::drawOutliner(Context& c, const Rect& r) {
     beginPanel("Cenário", r.x0, r.y0, r.x1, r.y1);
     auto item = [&](Kind k, int i, const std::string& name) {
-        if (ImGui::Selectable((name + "##" + std::to_string(k) + "_" + std::to_string(i)).c_str(), kind_ == k && idx_ == i,
+        if (ImGui::Selectable((name + "##" + std::to_string(k) + "_" + std::to_string(i)).c_str(), isSel(k, i),
                               ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::GetIO().KeyShift) { // Shift + clique: junta ou tira da seleção
+                toggleSel(k, i);
+                status_ = std::to_string(kind_ == None ? 0 : 1 + extra_.size()) + " selecionados";
+                return;
+            }
+            extra_.clear();
             kind_ = k;
             idx_ = i;
             status_ = "Selecionado: " + name + "  (G mover, R girar, S escala, F focar)";
@@ -1489,6 +1737,7 @@ void FreeEditor::drawOutliner(Context& c, const Rect& r) {
         item(Start, 0, "Início do personagem");
         if (c.layout.hasDoor) item(DoorSel, 0, "Porta");
         for (size_t i = 0; i < c.layout.extraDoors.size(); ++i) item(ExtraDoor, (int)i, "Porta " + std::to_string(i + 2));
+        for (size_t i = 0; i < c.layout.cloths.size(); ++i) item(ClothSel, (int)i, "Tecido " + std::to_string(i + 1));
         for (size_t i = 0; i < c.layout.spawns.size(); ++i) item(Spawn, (int)i, "Inimigo " + std::to_string(i + 1));
         for (size_t i = 0; i < c.gunNames.size(); ++i) item(Gun, (int)i, "Arma: " + c.gunNames[i]);
         ImGui::TreePop();
@@ -1555,7 +1804,16 @@ void FreeEditor::drawContent(Context& c, Result& res, const Rect& r) {
         bool hov = ImGui::IsItemHovered(), sel = selAsset_ == i && kind_ == None;
         dl->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile + 30), sel ? IM_COL32(70, 60, 40, 255) : hov ? IM_COL32(55, 55, 60, 255) : IM_COL32(38, 38, 42, 255), 4.0f);
         dl->AddRectFilled(ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + tile - 4, p.y + tile - 4), IM_COL32(24, 24, 27, 255), 3.0f);
-        if (a.rel == "@porta" || a.rel == "@porta_vidro") { // ícone de porta (vidro: azulada com moldura)
+        if (a.rel == "@tecido") { // ícone: pano pendurado ondulado
+            ImVec2 c0(p.x + tile * 0.22f, p.y + tile * 0.2f);
+            const float w = tile * 0.56f, hgt = tile * 0.6f;
+            dl->AddLine(ImVec2(c0.x - 4, c0.y), ImVec2(c0.x + w + 4, c0.y), IM_COL32(180, 180, 190, 255), 3.0f);
+            for (int k = 0; k < 7; ++k) {
+                float x = c0.x + w * k / 6.0f;
+                dl->AddLine(ImVec2(x, c0.y), ImVec2(x + std::sin(k * 1.3f) * 4.0f, c0.y + hgt), k % 2 ? IM_COL32(150, 40, 45, 255) : IM_COL32(200, 70, 70, 255),
+                            w / 6.0f);
+            }
+        } else if (a.rel == "@porta" || a.rel == "@porta_vidro") { // ícone de porta (vidro: azulada com moldura)
             const bool gl = a.rel == "@porta_vidro";
             ImVec2 c0(p.x + tile * 0.33f, p.y + tile * 0.18f), c1(p.x + tile * 0.67f, p.y + tile * 0.82f);
             dl->AddRectFilled(c0, c1, gl ? IM_COL32(150, 190, 205, 170) : IM_COL32(150, 95, 50, 255), 2.0f);
@@ -1611,6 +1869,7 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
     if (rebuildPending_) { rebuildPending_ = false; res = Result::Rebuild; }
     ImGuiIO& io = ImGui::GetIO();
     const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    layout_.handle(std::max(56.0f, H * 0.068f), W, H); // divisórias arrastáveis entre os painéis
     const Rect vr = viewRect(W, H);
 
     // importação terminou: copia para assets/ e mostra no navegador
@@ -1734,14 +1993,34 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
         boxLines(glm::mat4(1.0f), h - glm::vec3(0, 0, 0.08f), h + glm::vec3(c.layout.doorWidth, c.layout.doorHeight, 0.08f),
                  kind_ == DoorSel ? kSel : kDoorCol, kind_ == DoorSel ? 2.5f : 1.5f);
     }
+    for (size_t i = 0; i < c.layout.cloths.size(); ++i) { // tecidos (contorno de onde foram postos)
+        const ClothPlace& cl = c.layout.cloths[i];
+        glm::vec3 lo, hi;
+        clothBox(cl, lo, hi);
+        const bool sel = isSel(ClothSel, (int)i);
+        boxLines(clothFrame(cl), lo, hi, sel ? kSel : IM_COL32(200, 120, 160, 200), sel ? 2.5f : 1.2f);
+    }
     for (size_t i = 0; i < c.layout.extraDoors.size(); ++i) {
         const DoorPlace& d = c.layout.extraDoors[i];
         bool sel = kind_ == ExtraDoor && idx_ == (int)i;
         boxLines(doorFrame(d), glm::vec3(0, 0, -0.08f), glm::vec3(d.width, d.height, 0.08f), sel ? kSel : kDoorCol, sel ? 2.5f : 1.5f);
     }
-    if (kind_ == Prop && idx_ < (int)c.propMeshes.size() && c.propMeshes[idx_])
+    if (kind_ == Prop && idx_ < (int)c.propMeshes.size() && idx_ < (int)c.props.size() && c.propMeshes[idx_])
         boxLines(c.props[idx_].model, c.propMeshes[idx_]->boundsMin, c.propMeshes[idx_]->boundsMax, kSel, 2.5f);
     if (kind_ == Box) boxLines(glm::mat4(1.0f), c.world.boxes[idx_].min, c.world.boxes[idx_].max, kSel, 2.5f);
+    for (const SelItem& e : extra_) { // os outros selecionados (Shift + clique)
+        if (e.k == Prop && e.i < (int)c.propMeshes.size() && e.i < (int)c.props.size() && c.propMeshes[e.i])
+            boxLines(c.props[e.i].model, c.propMeshes[e.i]->boundsMin, c.propMeshes[e.i]->boundsMax, kSel, 1.8f);
+        else if (e.k == Box && e.i < (int)c.world.boxes.size())
+            boxLines(glm::mat4(1.0f), c.world.boxes[e.i].min, c.world.boxes[e.i].max, kSel, 1.8f);
+        else if (e.k == Light && e.i < (int)c.layout.lights.size()) {
+            const glm::vec3 p = c.layout.lights[e.i].pos;
+            boxLines(glm::mat4(1.0f), p - glm::vec3(0.3f), p + glm::vec3(0.3f), kSel, 1.8f);
+        } else if (e.k == Spawn && e.i < (int)c.layout.spawns.size()) {
+            const glm::vec3 p = c.layout.spawns[e.i];
+            boxLines(glm::mat4(1.0f), p - glm::vec3(0.3f, 0.0f, 0.3f), p + glm::vec3(0.3f, 1.8f, 0.3f), kSel, 1.8f);
+        }
+    }
     // luzes: bolinha da cor da luz; direção (spot, sol, área); selecionada mostra o alcance
     for (size_t i = 0; i < c.layout.lights.size(); ++i) {
         const LightPlace& li = c.layout.lights[i];
@@ -1840,6 +2119,29 @@ FreeEditor::Result FreeEditor::drawUi(Context& c, const glm::mat4& vp, int, int)
         }
         ImVec2 cp;
         if (project(brushHit_, cp)) dl->AddCircleFilled(cp, 3.0f, IM_COL32(255, 220, 120, 255));
+    }
+    if (const char* pe = std::getenv("GA_PLACE")) { // depuração: "quadro arquivo" solta esse modelo na frente da câmera
+        static int fr = 0;
+        int at = 0;
+        char rel[256] = {};
+        float px = cam_.x, pz = cam_.z + 12.0f;
+        int save = 0;
+        const int n = std::sscanf(pe, "%d %255s %f %f %d", &at, rel, &px, &pz, &save); // posição e salvar opcionais
+        if (n >= 2 && ++fr == at) {
+            if (!assetsScanned_) scanAssets(c);
+            for (const Asset& a : assetList_)
+                if (a.rel == rel) {
+                    auto t0 = std::chrono::steady_clock::now();
+                    bool ok = placeAsset(a, glm::vec3(px, 0.0f, pz), c);
+                    if (ok && save) {
+                        saveGround(c);
+                        c.layout.save(c.root + "/" + sceneFile(c.sceneId));
+                        dirty_ = false;
+                    }
+                    std::printf("[place] %s ok=%d %.0f ms\n", rel, ok, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+                    if (ok) res = Result::Rebuild;
+                }
+        }
     }
     // soltar um modelo do navegador na vista
     if (ImGui::BeginDragDropTarget()) {

@@ -22,7 +22,11 @@ public:
     void startStow(int item, int slot) { start(Action::Stow, item, slot); }
     void startDraw(int item, int slot) { start(Action::Draw, item, slot); }
     void begin() { started_ = true; } // chegou na borda da mesa: começa o gesto
-    void cancel() { action_ = Action::None; }
+    // Desiste do gesto. Pegando (antes de fechar a mão na arma) a pose não some de uma vez: o corpo
+    // volta suave (~0,3 s) para o movimento que o jogador fez.
+    void cancel();
+    bool fading() const { return fading_; }
+    bool pastGrab() const; // já fechou a mão na arma (não dá mais para desistir)
 
     struct Events {
         bool grabbed = false; // arma passou para a mão neste quadro
@@ -45,4 +49,6 @@ private:
     bool started_ = false;
     int item_ = -1, slot_ = -1;
     float t_ = 0.0f;
+    bool fading_ = false;
+    float fadeT_ = 0.0f;
 };

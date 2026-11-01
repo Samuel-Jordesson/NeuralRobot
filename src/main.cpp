@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,8 @@
 #include "soldiers.h"
 #include "table.h"
 #include "terrain.h"
+#include "cloth.h"
+#include "cinematic.h"
 #include "weapon.h"
 
 namespace {
@@ -283,6 +286,11 @@ int main(int argc, char** argv) {
     }
 #endif
     std::printf("[jogo] arquivos em %s\n", root.c_str());
+    {   // modelos já processados ficam em .cache/modelos (a segunda abertura não relê os arquivos pesados)
+        std::error_code ec;
+        std::filesystem::create_directories(root + "/.cache/modelos", ec);
+        if (!ec) CharacterModel::cacheDir = root + "/.cache/modelos";
+    }
     Skeleton skeleton = Skeleton::makeCrashDummy();
     CharacterModel character;
     if (!character.load(root + "/crash_dummy.glb", &skeleton, {})) return 1;
@@ -334,6 +342,7 @@ int main(int argc, char** argv) {
     Terrain terrain;          // relevo e pintura do chão do cenário atual (editor)
     GroundPaint paint;
     int paintScene = -1;      // cenário de onde vieram (só recarrega ao trocar de cenário)
+    std::vector<std::unique_ptr<Cloth>> cloths; // tecidos do cenário (simulados)
     AssetLibrary assets;      // modelos postos no cenário pelo editor
     assets.root = root;
     assets.loadConfig();
@@ -472,6 +481,15 @@ int main(int argc, char** argv) {
                 if (i >= 0 && i < (int)world.boxes.size() && !world.boxes[i].hidden) { world.boxes[i].min = b.first; world.boxes[i].max = b.second; }
         }
         assets.build(world, scene.props, L); // objetos arrastados do navegador de conteúdo
+        // tecidos: cada um começa de novo na posição do layout
+        for (auto& cl : cloths) cl->release();
+        cloths.clear();
+        scene.cloths.clear();
+        for (const ClothPlace& cp : L.cloths) {
+            cloths.push_back(std::make_unique<Cloth>());
+            cloths.back()->build(cp, root);
+            scene.cloths.push_back(cloths.back().get());
+        }
         if (paintScene != id) { // relevo e pintura salvos do cenário
             paintScene = id;
             terrain.release();
@@ -490,6 +508,7 @@ int main(int argc, char** argv) {
                 paint.loadWeights(root + "/" + scenePaintFile(id));
             }
         }
+        CharacterModel::releaseShared(); // solta o arquivo aberto e as texturas guardadas para as partes
         world.terrain = &terrain;
         scene.terrain = &terrain;
         scene.paint = &paint;
@@ -561,7 +580,7 @@ int main(int argc, char** argv) {
             applyAimPose(skeleton, pose, *hd, aimLocal, aimW, recoil);
         }
         float support = rifle ? 1.0f : 0.0f; // mão esquerda no guarda-mão
-        if (handling.busy()) {
+        if (handling.busy() || handling.fading()) { // desistindo: a pose de pegar some aos poucos
             const GunItem& it = loadout.items[handling.item()];
             computeGlobals(skeleton, pose, globals);
             HandReach hr = handling.reach(skeleton, globals, *it.def, glm::inverse(charModel) * it.groundMatrix());
@@ -592,6 +611,7 @@ int main(int argc, char** argv) {
             l.range = std::max(0.1f, li.range);
             l.cosInner = std::cos(glm::radians(std::min(li.inner, li.outer)));
             l.cosOuter = li.type == LightPlace::Area ? std::max(0.05f, li.size) : std::cos(glm::radians(li.outer)); // área: tamanho
+            l.shadow = li.shadow;
             scene.lights.push_back(l);
         }
         // pintura nos modelos (sujeira, manchas) do mesmo cenário
@@ -630,6 +650,15 @@ int main(int argc, char** argv) {
         if (args.gun) loadout.equipDirect(wi, true);
         if (args.act) {
             if (!std::strcmp(args.act, "pickup")) {
+                GunItem& it = loadout.items[wi];
+                if (!it.onTable) { // no chão: de frente para a arma, vindo de onde o personagem está
+                    glm::vec3 d = it.groundPos - args.pos;
+                    d.y = 0.0f;
+                    float facing = glm::length(d) > 0.05f ? std::atan2(d.x, d.z) : args.yaw;
+                    glm::vec3 fwd(std::sin(facing), 0.0f, std::cos(facing)), right(-std::cos(facing), 0.0f, std::sin(facing));
+                    it.standPos = glm::vec3(it.groundPos.x, args.pos.y, it.groundPos.z) - fwd * 0.40f - right * 0.15f;
+                    it.standYaw = facing;
+                }
                 args.pos = loadout.items[wi].standPos;
                 args.yaw = loadout.items[wi].standYaw;
                 handling.startPickUp(wi);
@@ -655,6 +684,7 @@ int main(int argc, char** argv) {
             for (float t = 0.0f; t < args.simTime; t += sdt) {
                 body.step(world, dir, args.simRun ? animator.runSpeed() : animator.walkSpeed(), false, sdt);
                 arena.door.update(world, {&body}, sdt);
+                for (auto& cl : cloths) cl->step(sdt, world, {&body}, {}, Wind(), t); // tecidos reagem à simulação
                 for (Door& d : arena.extraDoors) d.update(world, {&body}, sdt);
                 AnimInput ai;
                 ai.dt = sdt;
@@ -808,6 +838,7 @@ int main(int argc, char** argv) {
                 a = b + 1;
             }
         }
+        for (auto& cl : cloths) cl->upload();
         if (args.menu) menu::init(win, false);
         const int frames = std::max(1, args.bench);
         glFinish();
@@ -1020,6 +1051,16 @@ int main(int argc, char** argv) {
         }
     };
 
+    // cena de abertura do cenário oficial (último cômodo da casa)
+    Cinematic cine;
+    glm::mat4 cineGlobals[BONE_COUNT], cineSkin[BONE_COUNT];
+    auto startCine = [&]() {
+        if (sceneId != SceneOfficial || getenv("GA_NOCINE")) return;
+        const glm::vec3 a(7.7f, 0.0f, -27.2f);
+        cine.start(glm::vec3(a.x, world.groundHeightAt(a.x, a.z, 1.5f), a.z), 0.0f);
+        cine.useClip(root + "/anims/abertura.anim", skeleton, walkClip); // editável no editor de animação
+        if (const char* ct = getenv("GA_CINE_T")) cine.setTime((float)std::atof(ct)); // depuração: começa nesse ponto
+    };
     // editor do jogo (abre direto na versão de desenvolvimento; menu > Edição livre)
     FreeEditor freeEdit;
     bool playFromEditor = false;  // jogando a partir do editor: Esc para e volta
@@ -1076,6 +1117,7 @@ int main(int argc, char** argv) {
         if (getenv("GA_ANIM")) animEdit.begin(root, body.pos, charYaw); // depuração: abre direto o editor de animação
     }
 #endif
+    if (!args.freeEdit && !shotMode) startCine();
     while (!glfwWindowShouldClose(win)) {
         double now = glfwGetTime();
         float realDt = (float)std::min(now - lastTime, 0.1);
@@ -1148,7 +1190,7 @@ int main(int argc, char** argv) {
         if (!menuOpen) cam.targetDist = std::clamp(cam.targetDist - g_scroll * 0.4f, 1.6f, 9.0f);
         g_scroll = 0.0f;
 
-        auto key = [&](int k) { return !menuOpen && playerAlive && glfwGetKey(win, k) == GLFW_PRESS ? 1.0f : 0.0f; };
+        auto key = [&](int k) { return !menuOpen && playerAlive && !cine.active() && glfwGetKey(win, k) == GLFW_PRESS ? 1.0f : 0.0f; };
         bool f1 = key(GLFW_KEY_F1) > 0;
         if (f1 && !f1Was) debugWeights = !debugWeights;
         f1Was = f1;
@@ -1183,8 +1225,16 @@ int main(int argc, char** argv) {
         const bool idle = !handling.busy() && next == Next::None;
         auto stowHand = [&]() { handling.startStow(loadout.hand, loadout.items[loadout.hand].slot); };
         auto startPick = [&](int i) {
-            if (loadout.items[i].onTable) handling.startPickUp(i); // anda até a mesa e pega com a mão
-            else loadout.toHand(i);                               // do chão: pega direto
+            GunItem& it = loadout.items[i];
+            if (!it.onTable) { // no chão: chega perto, de frente, com a arma na frente do ombro direito, e agacha
+                glm::vec3 d = it.groundPos - body.pos;
+                d.y = 0.0f;
+                float facing = glm::length(d) > 0.05f ? std::atan2(d.x, d.z) : charYaw;
+                glm::vec3 fwd(std::sin(facing), 0.0f, std::cos(facing)), right(-std::cos(facing), 0.0f, std::sin(facing));
+                it.standPos = glm::vec3(it.groundPos.x, body.pos.y, it.groundPos.z) - fwd * 0.40f - right * 0.15f;
+                it.standYaw = facing;
+            }
+            handling.startPickUp(i); // anda até a arma e pega com a mão
         };
         int pick = idle ? loadout.pickable(body.pos) : -1;
         if (eKey && !eWas && pick >= 0) {
@@ -1242,8 +1292,10 @@ int main(int argc, char** argv) {
         float wishSpeed = run ? animator.runSpeed() : animator.walkSpeed();
         bool jump = key(GLFW_KEY_SPACE) > 0;
         float standDist = 0.0f;
+        // mexeu antes de fechar a mão na arma: desiste de pegar e segue o movimento (a pose some suave)
+        if (handling.locksMovement() && glm::length(move) > 0.1f && !handling.pastGrab()) handling.cancel();
         if (handling.locksMovement()) {
-            // pegando da mesa: caminha sozinho até a borda e fica parado durante o gesto
+            // pegando: caminha sozinho até a arma e fica parado durante o gesto
             jump = false;
             move = glm::vec3(0.0f);
             const GunItem& target = loadout.items[handling.item()];
@@ -1865,15 +1917,125 @@ int main(int argc, char** argv) {
                 glfwGetWindowSize(win, &ww, &wh);
                 scene.proj = freeEdit.viewportFix((float)ww, (float)wh, (float)fbw / std::max(1, fbh)) * scene.proj;
             }
+            // tecidos: gravidade, vento (Configurações) e quem encosta (no editor também, para ver o vento)
+            if (!cloths.empty()) {
+                const float cdt = (freeEdit.active() || animEdit.active()) ? realDt : dt;
+                Wind wind;
+                wind.on = gfx.wind;
+                wind.strength = gfx.windStrength;
+                wind.dir = glm::radians(gfx.windDir);
+                wind.gust = gfx.windGust;
+                std::vector<const CharacterBody*> pushers;
+                if (!freeEdit.active()) {
+                    pushers.push_back(&body);
+                    for (CharacterBody* b : squad.aliveBodies()) pushers.push_back(b);
+                }
+                std::vector<std::pair<glm::vec3, glm::vec3>> movers; // objetos com física (caixa de cada um agora)
+                for (const auto& d : assets.dynamics) movers.push_back({d.lo + d.offset, d.hi + d.offset});
+                for (auto& cl : cloths) {
+                    cl->step(cdt, world, pushers, movers, wind, (float)glfwGetTime());
+                    cl->upload();
+                }
+            }
+            scene.dof = RenderScene::Dof();
+            if (animEdit.active()) {
+                // câmera de cena: prévia numa textura do tamanho da janela (mostrada em 16:9 embaixo)
+                static GLuint pvFbo = 0, pvTex = 0;
+                static int pvW = 0, pvH = 0, pvFrame = 0;
+                RenderScene::Dof d;
+                d.on = animEdit.dofOn();
+                d.focus = animEdit.focusDist();
+                d.focalMm = animEdit.focalMm();
+                d.fstop = animEdit.fstop();
+                if (animEdit.previewWanted()) {
+                    if (!pvFbo || pvW != fbw || pvH != fbh) {
+                        if (!pvFbo) { glGenFramebuffers(1, &pvFbo); glGenTextures(1, &pvTex); }
+                        glBindTexture(GL_TEXTURE_2D, pvTex);
+                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, fbw, fbh, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                        glBindFramebuffer(GL_FRAMEBUFFER, pvFbo);
+                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pvTex, 0);
+                        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                        pvW = fbw;
+                        pvH = fbh;
+                    }
+                    if ((pvFrame++ & 1) == 0) { // um quadro sim, um não: a prévia custa uma segunda renderização
+                        RenderScene ps = scene;
+                        ps.view = animEdit.cineView();
+                        ps.proj = animEdit.cineProj(16.0f / 9.0f);
+                        ps.camPos = animEdit.cineEye();
+                        ps.dof = d;
+                        renderer.render(ps, 0.0f, pvFbo);
+                    }
+                    animEdit.setPreviewTexture(pvTex);
+                } else animEdit.setPreviewTexture(0);
+                if (animEdit.pilotView()) scene.dof = d; // vendo pela câmera: mesmo foco na vista
+            }
+            // cena de abertura: câmera, robô, rato e lixeira vêm dela (o jogador fica parado)
+            size_t cinePropsAt = scene.props.size();
+            if (sceneId == SceneOfficial && (cine.active() || cine.time() > 0.0f)) // a lixeira fica na sala depois
+                if (CharacterModel* can = assets.mesh("elements-cenari/realistic_trash_can_damaged_lowpoly_free.glb"))
+                    scene.props.push_back({can, cine.canModel() * glm::scale(glm::mat4(1.0f), glm::vec3(0.0056f))});
+            if (cine.active()) {
+                static bool enterWas = false;
+                const bool enter = glfwGetKey(win, GLFW_KEY_ENTER) == GLFW_PRESS;
+                if (enter && !enterWas) cine.skip(); // Enter pula
+                enterWas = enter;
+                if (!menuOpen) cine.update(getenv("GA_CINE_T") ? 0.0f : realDt);
+                Pose cp = cine.robotPose(skeleton, walkClip);
+                computeGlobals(skeleton, cp, cineGlobals);
+                computeSkinMatrices(skeleton, cineGlobals, cineSkin);
+                scene.bones = cineSkin;
+                scene.characterModel = cine.robotModel();
+                scene.characterPos = cine.endPos();
+                scene.guns.clear();
+                if (cine.mouseVisible())
+                    if (CharacterModel* mouse = assets.mesh("house_mouse.glb")) scene.props.push_back({mouse, cine.mouseModel(0.04f)});
+                float focus;
+                glm::vec3 eye;
+                cine.camera((float)fbw / std::max(1, fbh), scene.view, scene.proj, eye, focus);
+                scene.camPos = eye;
+                scene.dof.on = true;
+                scene.dof.focus = focus;
+                scene.dof.focalMm = 50.0f;
+                scene.dof.fstop = 1.8f;
+                scene.crosshairAlpha = 0.0f;
+                scene.promptAlpha = 0.0f;
+                if (!cine.active()) { // acabou: o jogador assume onde o robô parou
+                    body = CharacterBody();
+                    body.pos = cine.endPos();
+                    charYaw = cine.endYaw();
+                    cam.yaw = charYaw;
+                    visualY = body.pos.y;
+                    footIK.reset();
+                }
+            }
             renderer.render(scene, realDt);
+            scene.props.resize(cinePropsAt);
 
             menu::beginFrame();
+            if (cine.active() || (cine.time() > 0.0f && cine.time() < Cinematic::kLength)) {
+                // barras de cinema (2,39:1) e fade
+                ImDrawList* fg = ImGui::GetForegroundDrawList();
+                const ImVec2 ds = ImGui::GetIO().DisplaySize;
+                const float bar = std::max(0.0f, (ds.y - ds.x / 2.39f) * 0.5f) * cine.bars();
+                fg->AddRectFilled(ImVec2(0, 0), ImVec2(ds.x, bar), IM_COL32(0, 0, 0, 255));
+                fg->AddRectFilled(ImVec2(0, ds.y - bar), ImVec2(ds.x, ds.y), IM_COL32(0, 0, 0, 255));
+                if (cine.fade() > 0.001f) fg->AddRectFilled(ImVec2(0, 0), ds, IM_COL32(0, 0, 0, (int)(255 * cine.fade())));
+                if (cine.time() > 1.5f && cine.time() < 5.0f)
+                    fg->AddText(ImVec2(ds.x - 170, ds.y - bar + 8), IM_COL32(200, 200, 200, 140), "Enter para pular");
+            }
             if (animEdit.active()) {
                 if (animEdit.drawUi(skeleton, {defs[0]->name, defs[1]->name, defs[2]->name})) animEdit.end();
             } else if (freeEdit.active()) {
                 FreeEditor::Result r = freeEdit.drawUi(feCtx, scene.proj * scene.view, fbw, fbh);
                 using R = FreeEditor::Result;
-                if (r == R::Rebuild) setupScene(sceneId);
+                if (r == R::Rebuild) {
+                    double t0 = glfwGetTime();
+                    setupScene(sceneId);
+                    if (getenv("GA_PLACE")) std::printf("[place] setupScene %.0f ms\n", (glfwGetTime() - t0) * 1000.0);
+                }
                 else if (r == R::Play) {
                     editorSettings = false;
                     playFromEditor = true;
@@ -1881,6 +2043,7 @@ int main(int argc, char** argv) {
                     playerAlive = true;
                     health = 100.0f;
                     exitFreeEdit();
+                    startCine(); // cenário oficial: começa pela cena de abertura
                 } else if (r == R::Compile) {
                     saveGunTuning(weaponsPath);
                     builder::start(root);
@@ -1922,7 +2085,8 @@ int main(int argc, char** argv) {
                 else if (ea == menu::EditorAction::Compile && apply()) builder::start(root);
             } else if (menuOpen) {
                 bool changed = false;
-                menu::Action act = menu::drawPauseMenu(gfx, changed);
+                menu::Action act = menu::drawGameMenu(gfx, changed); // no jogo: menu simples (o completo fica no editor)
+                if (changed) renderer.applySettings(gfx);
                 if (act == menu::Action::Resume) setMenu(false);
                 else if (act == menu::Action::Quit) glfwSetWindowShouldClose(win, 1);
                 else if (act == menu::Action::EditGuns) setEditor(true);
@@ -1953,7 +2117,7 @@ int main(int argc, char** argv) {
             }
             if (playFromEditor) freeEdit.drawPlaying(feCtx); // painéis do editor em volta do jogo
             menu::drawBuildStatus();
-            if (!editorOpen && !freeEdit.active()) {
+            if (!editorOpen && !freeEdit.active() && !cine.active()) {
                 menu::CombatHud hud;
                 hud.health = health;
                 hud.hurtFlash = hurtFlash;

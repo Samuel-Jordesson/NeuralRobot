@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "terrain.h"
+#include "cloth.h"
 
 #include <stb_image.h>
 
@@ -151,7 +152,8 @@ GpuProfiler g_prof;
 
 // unidades de textura fixas usadas pela iluminação
 enum TexUnit { kUnitIrradiance = 4, kUnitEnv = 5, kUnitAO = 6, kUnitShadow = 7, kUnitSkyCube = 8, kUnitNoise = 9,
-               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12, kUnitRoof = 13, kUnitPaintM = 14 };
+               kUnitPaintW = 10, kUnitPaintA = 11, kUnitPaintN = 12, kUnitRoof = 13, kUnitPaintM = 14,
+               kUnitLightShadow = 15 /* 15..18 */ };
 
 // Textura de ruído que repete sem emenda (256x256), lida pelos shaders no lugar de ruído procedural:
 // R = fbm grande (4 células), G = ruído médio (32), B = ruído fino (128), A = fbm (8 células).
@@ -215,7 +217,7 @@ GLuint makeNoiseTexture() {
 
 bool Renderer::init(const std::string& dir, int width, int height) {
     auto ld = [&](Shader& s, const char* vs, const char* fs) { return s.load(dir + "/" + vs, dir + "/" + fs); };
-    bool ok = ld(skinned_, "skinned.vert", "character.frag") && ld(skinnedDepth_, "skinned.vert", "depth.frag") &&
+    bool ok = ld(dist_, "skinned.vert", "dist.frag") && ld(shadowMin_, "fullscreen.vert", "shadow_min.frag") && ld(skinned_, "skinned.vert", "character.frag") && ld(skinnedDepth_, "skinned.vert", "depth.frag") &&
               ld(skinnedPre_, "skinned.vert", "prepass.frag") && ld(world_, "static.vert", "world.frag") &&
               ld(worldDepth_, "static.vert", "depth.frag") && ld(worldPre_, "static.vert", "prepass.frag") &&
               ld(sky_, "fullscreen.vert", "sky.frag") && ld(skyAtmo_, "fullscreen.vert", "sky_atmo.frag") &&
@@ -245,7 +247,30 @@ bool Renderer::init(const std::string& dir, int width, int height) {
         sh->set("uRoofMap", (int)kUnitRoof);
         sh->set("uRoofOn", 0);
         sh->set("uLightCount", 0);
+        for (int k = 0; k < kLightShadows; ++k) sh->set(("uLShadow" + std::to_string(k)).c_str(), kUnitLightShadow + k);
     }
+    // sombra das luzes: cubos de distância (R32F) e um cubo "longe" para quando não há sombra
+    auto makeShadowCube = [](int res, float fill) {
+        GLuint t;
+        glGenTextures(1, &t);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, t);
+        std::vector<float> px((size_t)res * res, fill);
+        for (int f = 0; f < 6; ++f)
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_R32F, res, res, 0, GL_RED, GL_FLOAT, px.data());
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTexParameteri(GL_TEXTURE_CUBE_MAP, w, GL_CLAMP_TO_EDGE);
+        return t;
+    };
+    for (int k = 0; k < kLightShadows; ++k) lsCube_[k] = makeShadowCube(kLightShadowRes, 1e9f);
+    lsDummy_ = makeShadowCube(1, 1e9f);
+    glGenFramebuffers(1, &lsFbo_);
+    glGenRenderbuffers(1, &lsDepth_);
+    glBindRenderbuffer(GL_RENDERBUFFER, lsDepth_);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, kLightShadowRes, kLightShadowRes);
+    glBindFramebuffer(GL_FRAMEBUFFER, lsFbo_);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, lsDepth_);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     cube_ = makeCube();
     sphere_ = makeSphere(48, 24);
@@ -306,7 +331,9 @@ bool Renderer::init(const std::string& dir, int width, int height) {
 void Renderer::createShadowMap() {
     if (shadowTex_) {
         glDeleteTextures(1, &shadowTex_);
+        glDeleteTextures(1, &shadowRaw_);
         glDeleteFramebuffers(1, &shadowFbo_);
+        glDeleteFramebuffers(1, &shadowMinFbo_);
     }
     shadowRes_ = gs_.shadowRes;
     shadowLayers_ = gs_.shadowCascades;
@@ -322,8 +349,21 @@ void Renderer::createShadowMap() {
     glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, border);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    // profundidade como desenhada (lida texel a texel para engordar as sombras)
+    glGenTextures(1, &shadowRaw_);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowRaw_);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT16, shadowRes_, shadowRes_, shadowLayers_, 0, GL_DEPTH_COMPONENT,
+                 GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_NONE);
     glGenFramebuffers(1, &shadowFbo_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowRaw_, 0, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glGenFramebuffers(1, &shadowMinFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowMinFbo_);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowTex_, 0, 0);
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
@@ -576,7 +616,11 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
         const int n = std::min(kMax, (int)ls.size());
         glm::vec4 pos[kMax], col[kMax], dir[kMax];
         float outer[kMax];
+        int shadowIdx[kMax];
         for (int i = 0; i < n; ++i) {
+            shadowIdx[i] = -1;
+            for (size_t k = 0; k < lsLights_.size(); ++k)
+                if (lsLights_[k] == ls[i]) shadowIdx[i] = (int)k;
             pos[i] = glm::vec4(ls[i]->pos, ls[i]->range);
             col[i] = glm::vec4(ls[i]->color, (float)ls[i]->type);
             dir[i] = glm::vec4(glm::normalize(ls[i]->dir), ls[i]->cosInner);
@@ -588,6 +632,7 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
             glUniform4fv(glGetUniformLocation(sh.id(), "uLightColor"), n, &col[0].x);
             glUniform4fv(glGetUniformLocation(sh.id(), "uLightDir"), n, &dir[0].x);
             glUniform1fv(glGetUniformLocation(sh.id(), "uLightOuter"), n, outer);
+            glUniform1iv(glGetUniformLocation(sh.id(), "uLightShadow"), n, shadowIdx);
         }
     }
     sh.set("uCharPos", s.characterPos);
@@ -942,10 +987,36 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
     if (color) skinSh.set("uDebug", 0);
     for (const RenderScene::Prop& p : s.props) {
         if (!p.mesh) continue;
-        if (painted) skinSh.set("uPaintOn", p.mesh->hasAlphaCut ? 0 : 1); // folhagem não recebe a pintura
+        // pintura do chão só no chão: modelos postos (casa, móveis) e folhagem ficam com a textura deles
+        if (painted) skinSh.set("uPaintOn", p.groundPaint && !p.mesh->hasAlphaCut ? 1 : 0);
         drawSkinned(skinSh, *p.mesh, p.model, identityBones_, color);
     }
     if (color) skinSh.set("uPaintOn", 0); // personagens e armas não recebem a pintura do chão
+    // tecidos: malha já no mundo, desenhada com o material dos modelos (dupla face)
+    for (const Cloth* cl : s.cloths) {
+        skinSh.set("uModel", glm::mat4(1.0f));
+        skinSh.setMat4Array("uBones", identityBones_, BONE_COUNT);
+        if (color) {
+            skinSh.set("uBaseTex", 0);
+            skinSh.set("uMRTex", 1);
+            skinSh.set("uNormalTex", 2);
+            skinSh.set("uEmissiveTex", 3);
+            skinSh.set("uMetallic", 0.0f);
+            skinSh.set("uRoughness", 1.0f);
+            skinSh.set("uEmissive", glm::vec3(0.0f));
+            skinSh.set("uUseAO", 0);
+            skinSh.set("uAlphaCut", 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, cl->texture());
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::mr());
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::normal());
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::black());
+        }
+        cl->draw();
+    }
     if (color) skinSh.set("uDebug", s.debugWeights ? 1 : 0);
     drawSkinned(skinSh, *s.character, s.characterModel, s.bones, color);
     if (color) skinSh.set("uDebug", 0);
@@ -1085,13 +1156,27 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.6f, 2.0f);
+    glPolygonOffset(0.0f, 0.0f);
     for (int i = 0; i < shadowLayers_; ++i) {
-        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowTex_, 0, i);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowRaw_, 0, i);
         glClear(GL_DEPTH_BUFFER_BIT);
         drawScene(worldDepth_, skinnedDepth_, s, Pass::Shadow, cascadeVP_[i]);
     }
     glDisable(GL_POLYGON_OFFSET_FILL);
+    // engorda as sombras 1 texel (fecha frestas por onde a luz vazava em lugares fechados)
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowMinFbo_);
+    glDepthFunc(GL_ALWAYS);
+    shadowMin_.use();
+    shadowMin_.set("uSrc", 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowRaw_);
+    for (int i = 0; i < shadowLayers_; ++i) {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowTex_, 0, i);
+        shadowMin_.set("uLayer", i);
+        fullscreen();
+    }
+    glDepthFunc(GL_LESS);
+    renderLightShadows(s); // sombra das luzes do editor (personagens)
     g_prof.mark("sombras");
 
     // --- 2) pré-passo: normais e profundidade (SSAO, névoa e luz volumétrica)
@@ -1156,6 +1241,10 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     glBindTexture(GL_TEXTURE_2D, aoBlurTex_);
     glActiveTexture(GL_TEXTURE0 + kUnitShadow);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowTex_);
+    for (int k = 0; k < kLightShadows; ++k) {
+        glActiveTexture(GL_TEXTURE0 + kUnitLightShadow + k);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, k < (int)lsLights_.size() ? lsCube_[k] : lsDummy_);
+    }
     glActiveTexture(GL_TEXTURE0 + kUnitSkyCube);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyCube_);
 
@@ -1297,6 +1386,18 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     post_.set("uHDR", 0);
     post_.set("uBloom", 1);
     post_.set("uAdapt", 2);
+    // desfoque fora do foco: círculo de confusão de uma lente de verdade (sensor de 24 mm de altura)
+    post_.set("uDofOn", s.dof.on ? 1 : 0);
+    if (s.dof.on) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, preDepth_);
+        post_.set("uDepth", 3);
+        const float f = s.dof.focalMm, S = std::max(s.dof.focus * 1000.0f, f + 1.0f);
+        post_.set("uFocus", s.dof.focus);
+        post_.set("uCocScale", f * f / (std::max(0.7f, s.dof.fstop) * (S - f)) / 24.0f * (float)rh_);
+        post_.set("uProjZ", glm::vec2(s.proj[2][2], s.proj[3][2]));
+        glActiveTexture(GL_TEXTURE0);
+    }
     post_.set("uAutoExposure", gs_.autoExposure ? 1 : 0);
     post_.set("uExposureEV", gs_.exposure);
     post_.set("uBloomOn", gs_.bloom ? 1 : 0);
@@ -1324,4 +1425,51 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     glEnable(GL_DEPTH_TEST);
     g_prof.mark("pos+fxaa");
     g_prof.endFrame();
+}
+
+// Sombra das luzes do editor: para as até 4 luzes mais perto da câmera (que fazem sombra), um cubo com
+// a distância até a luz, desenhando só quem se mexe (personagem, soldados, armas, tecidos): leve o
+// bastante para a placa integrada, e o personagem projeta a sombra dele em tudo que a luz ilumina.
+void Renderer::renderLightShadows(const RenderScene& s) {
+    lsLights_.clear();
+    std::vector<const RenderScene::Light*> cand;
+    for (const RenderScene::Light& l : s.lights)
+        if (l.shadow && (l.type == 0 || l.type == 1 || l.type == 4) && glm::length(l.pos - s.camPos) < l.range + 30.0f)
+            cand.push_back(&l);
+    std::sort(cand.begin(), cand.end(), [&](auto* a, auto* b) { return glm::length(a->pos - s.camPos) < glm::length(b->pos - s.camPos); });
+    if ((int)cand.size() > kLightShadows) cand.resize(kLightShadows);
+    if (cand.empty() || !s.character) return;
+    static const glm::vec3 kDir[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const glm::vec3 kUp[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+    glBindFramebuffer(GL_FRAMEBUFFER, lsFbo_);
+    glViewport(0, 0, kLightShadowRes, kLightShadowRes);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_CULL_FACE);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    dist_.use();
+    for (size_t k = 0; k < cand.size(); ++k) {
+        const RenderScene::Light& l = *cand[k];
+        lsLights_.push_back(&l);
+        dist_.set("uLightPos", l.pos);
+        const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.05f, std::max(1.0f, l.range));
+        for (int f = 0; f < 6; ++f) {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, lsCube_[k], 0);
+            glClearColor(1e9f, 1e9f, 1e9f, 1e9f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            const glm::mat4 vp = proj * glm::lookAt(l.pos, l.pos + kDir[f], kUp[f]);
+            dist_.set("uViewProj", vp);
+            cullVP_ = vp;
+            drawSkinned(dist_, *s.character, s.characterModel, s.bones, false);
+            for (const RenderScene::Actor& a : s.actors) drawSkinned(dist_, *a.mesh, a.model, a.bones, false);
+            for (const RenderScene::Prop& g : s.guns) drawSkinned(dist_, *g.mesh, g.model, identityBones_, false);
+            for (const Cloth* cl : s.cloths) {
+                dist_.set("uModel", glm::mat4(1.0f));
+                dist_.setMat4Array("uBones", identityBones_, BONE_COUNT);
+                cl->draw();
+            }
+        }
+    }
+    glClearColor(0, 0, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

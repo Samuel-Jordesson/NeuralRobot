@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <sys/stat.h>
 
@@ -204,6 +205,185 @@ void drawFps(float fps, float frameMs) {
     ImGui::PopStyleVar(2);
 }
 
+// ---------------------------------------------------------------- menu do jogo (estilo AAA)
+namespace {
+// Botão grande de texto: sem caixa, acende com uma barra laranja ao lado quando o mouse passa.
+bool bigItem(const char* label, float w) {
+    ImGui::PushID(label);
+    ImGui::PushFont(g_section);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = 52.0f * g_scale;
+    bool clicked = ImGui::InvisibleButton("b", ImVec2(w, h));
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hov) {
+        dl->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + h), IM_COL32(255, 255, 255, 34), IM_COL32(255, 255, 255, 0),
+                                    IM_COL32(255, 255, 255, 0), IM_COL32(255, 255, 255, 34));
+        dl->AddRectFilled(p, ImVec2(p.x + 4 * g_scale, p.y + h), ImGui::GetColorU32(kAccent));
+    }
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(p.x + 22 * g_scale, p.y + (h - ts.y) * 0.5f), hov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 200, 205, 255),
+                label);
+    ImGui::PopFont();
+    ImGui::PopID();
+    return clicked;
+}
+
+// Opção com setas (< valor >), como nos menus de console.
+bool chooser(const char* text, int* v, const char* const* items, int n) {
+    ImGui::PushID(text);
+    bool ch = false;
+    const float W = ImGui::GetContentRegionAvail().x;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text);
+    ImGui::SameLine(W * 0.48f);
+    if (ImGui::ArrowButton("l", ImGuiDir_Left)) { *v = (*v + n - 1) % n; ch = true; }
+    ImGui::SameLine();
+    const float vw = W * 0.52f - 2 * ImGui::GetFrameHeight() - 2 * ImGui::GetStyle().ItemSpacing.x;
+    const ImVec2 ts = ImGui::CalcTextSize(items[*v]);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (vw - ts.x) * 0.5f);
+    ImGui::TextUnformatted(items[*v]);
+    ImGui::SameLine(W - ImGui::GetFrameHeight());
+    if (ImGui::ArrowButton("r", ImGuiDir_Right)) { *v = (*v + 1) % n; ch = true; }
+    ImGui::PopID();
+    return ch;
+}
+bool onOff(const char* text, bool* b) {
+    static const char* names[] = {"Desligado", "Ligado"};
+    int v = *b ? 1 : 0;
+    if (!chooser(text, &v, names, 2)) return false;
+    *b = v == 1;
+    return true;
+}
+bool slide(const char* text, float* v, float lo, float hi, const char* fmt) {
+    ImGui::PushID(text);
+    const float W = ImGui::GetContentRegionAvail().x;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text);
+    ImGui::SameLine(W * 0.48f);
+    ImGui::SetNextItemWidth(W * 0.52f);
+    bool ch = ImGui::SliderFloat("##s", v, lo, hi, fmt);
+    ImGui::PopID();
+    return ch;
+}
+} // namespace
+
+Action drawGameMenu(GraphicsSettings& gs, bool& changed) {
+    static bool settings = false;
+    static int lastFrame = -10;
+    if (ImGui::GetFrameCount() - lastFrame > 1) settings = false; // menu reaberto: começa na lista principal
+    lastFrame = ImGui::GetFrameCount();
+    if (const char* d = getenv("GA_MENUCFG")) settings = d[0] == '1'; // depuração
+    Action action = Action::None;
+    ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    // fundo: escurece e vinheta
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    bg->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(6, 7, 9, 165));
+    const ImGuiWindowFlags fl = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                ImGuiWindowFlags_NoBackground;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && settings) settings = false; // Esc nas configurações volta
+
+    if (!settings) {
+        const float w = std::min(W * 0.8f, 420.0f * g_scale), h = 360.0f * g_scale;
+        ImGui::SetNextWindowPos(ImVec2((W - w) * 0.5f, (H - h) * 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(w, h));
+        ImGui::Begin("##jogo", nullptr, fl);
+        ImGui::PushFont(g_title);
+        ImGui::TextUnformatted("PAUSADO");
+        ImGui::PopFont();
+        ImGui::GetWindowDrawList()->AddLine(ImGui::GetCursorScreenPos(),
+                                            ImVec2(ImGui::GetCursorScreenPos().x + w * 0.35f, ImGui::GetCursorScreenPos().y),
+                                            ImGui::GetColorU32(kAccent), 2.0f * g_scale);
+        ImGui::Dummy(ImVec2(0, 18 * g_scale));
+        if (bigItem("Continuar", w)) action = Action::Resume;
+        if (bigItem("Configurações", w)) settings = true;
+        if (bigItem("Sair", w)) action = Action::Quit;
+        ImGui::End();
+        return action;
+    }
+
+    // ---- configurações
+    const float w = std::min(W * 0.92f, 720.0f * g_scale), h = std::min(H * 0.86f, 640.0f * g_scale);
+    ImGui::SetNextWindowPos(ImVec2((W - w) * 0.5f, (H - h) * 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.065f, 0.075f, 0.94f));
+    ImGui::Begin("##config", nullptr, fl & ~ImGuiWindowFlags_NoBackground);
+    ImGui::PushFont(g_title);
+    ImGui::TextUnformatted("CONFIGURAÇÕES");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 6 * g_scale));
+    bool any = false, quality = false;
+    const float footer = 60.0f * g_scale;
+    if (ImGui::BeginTabBar("abas")) {
+        if (ImGui::BeginTabItem("  Gráficos  ")) {
+            ImGui::BeginChild("g", ImVec2(0, -footer));
+            ImGui::Dummy(ImVec2(0, 8 * g_scale));
+            static const char* presets[] = {"Baixo", "Médio", "Alto", "Ultra", "Personalizado"};
+            int p = gs.preset;
+            if (chooser("Qualidade", &p, presets, 5)) {
+                if (p != GraphicsSettings::Custom) gs.applyPreset(p);
+                else gs.preset = p;
+                any = true;
+            }
+            ImGui::Separator();
+            static const char* shadows[] = {"Baixa", "Média", "Alta", "Muito alta"};
+            static const int shadowVals[] = {1024, 2048, 3072, 4096};
+            int si = 0;
+            for (int k = 0; k < 4; ++k) if (gs.shadowRes >= shadowVals[k]) si = k;
+            if (chooser("Sombras", &si, shadows, 4)) { gs.shadowRes = shadowVals[si]; quality = true; }
+            static const char* aa[] = {"Desligado", "FXAA", "MSAA 2x", "MSAA 4x"};
+            int ai = gs.msaa >= 4 ? 3 : gs.msaa >= 2 ? 2 : gs.fxaa ? 1 : 0;
+            if (chooser("Anti-serrilhado", &ai, aa, 4)) {
+                gs.fxaa = ai >= 1;
+                gs.msaa = ai == 3 ? 4 : ai == 2 ? 2 : 1;
+                quality = true;
+            }
+            quality |= onOff("Oclusão de ambiente", &gs.ssao);
+            quality |= onOff("Luz volumétrica", &gs.volumetric);
+            quality |= onOff("Bloom", &gs.bloom);
+            float scale = gs.renderScale * 100.0f;
+            if (slide("Resolução interna", &scale, 50.0f, 100.0f, "%.0f%%")) { gs.renderScale = scale / 100.0f; quality = true; }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("  Tela  ")) {
+            ImGui::BeginChild("t", ImVec2(0, -footer));
+            ImGui::Dummy(ImVec2(0, 8 * g_scale));
+            any |= slide("Campo de visão", &gs.fov, 50.0f, 90.0f, "%.0f°");
+            any |= onOff("Sincronização vertical", &gs.vsync);
+            any |= onOff("Mostrar FPS", &gs.showFps);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("  Imagem  ")) {
+            ImGui::BeginChild("i", ImVec2(0, -footer));
+            ImGui::Dummy(ImVec2(0, 8 * g_scale));
+            any |= slide("Brilho", &gs.exposure, -2.0f, 2.0f, "%.1f");
+            any |= slide("Contraste", &gs.contrast, 0.7f, 1.4f, "%.2f");
+            any |= slide("Saturação", &gs.saturation, 0.0f, 1.6f, "%.2f");
+            any |= slide("Granulação", &gs.filmGrain, 0.0f, 1.0f, "%.2f");
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    if (quality && gs.preset != GraphicsSettings::Custom) gs.preset = GraphicsSettings::Custom;
+    changed = any || quality;
+    // rodapé
+    const float bw = 180.0f * g_scale;
+    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footer + 8 * g_scale);
+    if (ImGui::Button("Padrões", ImVec2(bw, 40 * g_scale))) { gs.resetDefaults(); changed = true; }
+    ImGui::SameLine(ImGui::GetWindowWidth() - bw - ImGui::GetStyle().WindowPadding.x);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.05f, 0.04f, 1.0f));
+    if (ImGui::Button("Voltar", ImVec2(bw, 40 * g_scale))) settings = false;
+    ImGui::PopStyleColor(2);
+    ImGui::End();
+    ImGui::PopStyleColor();
+    return action;
+}
+
 Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
     Action action = Action::None;
     ImGuiIO& io = ImGui::GetIO();
@@ -351,6 +531,14 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
                 quality |= checkbox("   Sombra das nuvens", "##cshadow", &gs.cloudShadows, "Nuvens fazem sombra no chão");
             }
             any |= sliderF("Névoa", "##fog", &gs.fogDensity, 0.0f, 5.0f, "%.2f", "Densidade da névoa perto do chão");
+
+            section("Vento");
+            any |= checkbox("Vento", "##wind", &gs.wind, "Tecidos (cortinas, bandeiras, toalhas) balançam com o vento");
+            if (gs.wind) {
+                any |= sliderF("   Intensidade", "##windS", &gs.windStrength, 0.0f, 25.0f, "%.1f m/s");
+                any |= sliderF("   Direção", "##windD", &gs.windDir, -180.0f, 180.0f, "%.0f°");
+                any |= sliderF("   Rajadas", "##windG", &gs.windGust, 0.0f, 1.0f, "%.2f", "Quanto o vento varia (0 = constante)");
+            }
             ImGui::EndChild();
             ImGui::EndTabItem();
         }

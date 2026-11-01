@@ -25,9 +25,16 @@ struct RenderScene {
     struct Prop {
         const CharacterModel* mesh;
         glm::mat4 model;
+        bool groundPaint = false; // recebe a pintura do chão (só o mapa do cenário, cujo chão faz parte do modelo)
     };
     std::vector<Prop> props;
     const struct Terrain* terrain = nullptr;    // relevo esculpido no editor
+    std::vector<const class Cloth*> cloths;     // tecidos simulados (malha já no mundo)
+    // profundidade de campo (câmera de cena do editor de animação): lente em mm, abertura f/, foco em m
+    struct Dof {
+        bool on = false;
+        float focus = 3.0f, focalMm = 35.0f, fstop = 2.8f;
+    } dof;
     const struct GroundPaint* paint = nullptr;  // pintura do chão
 
     // armas (na mão, no corpo e no mundo) e efeitos de tiro (do jogador e dos inimigos)
@@ -57,6 +64,7 @@ struct RenderScene {
         int type = 0;
         glm::vec3 pos{0.0f}, dir{0.0f, -1.0f, 0.0f}, color{1.0f}; // cor já com o brilho
         float range = 8.0f, cosInner = 0.9f, cosOuter = 0.75f;
+        bool shadow = true; // personagens fazem sombra com ela (até 4 luzes de cada vez)
     };
     std::vector<Light> lights;
 
@@ -140,6 +148,14 @@ private:
     // sombras em cascata
     static constexpr int kMaxCascades = 4;
     GLuint shadowFbo_ = 0, shadowTex_ = 0;
+    GLuint shadowRaw_ = 0, shadowMinFbo_ = 0; // sombra como desenhada; shadowTex_ = ela engordada 1 texel
+    Shader shadowMin_;
+    // sombra das luzes do editor: mapas em cubo (distância até a luz) para até 4 luzes
+    static constexpr int kLightShadows = 4, kLightShadowRes = 512;
+    Shader dist_;
+    GLuint lsFbo_ = 0, lsDepth_ = 0, lsCube_[4] = {}, lsDummy_ = 0;
+    std::vector<const void*> lsLights_; // quais luzes ganharam sombra neste quadro (na ordem dos cubos)
+    void renderLightShadows(const RenderScene& s);
     int shadowRes_ = 0, shadowLayers_ = 0;
     glm::mat4 cascadeVP_[kMaxCascades];
     float cascadeSplit_[kMaxCascades] = {}, cascadeTexel_[kMaxCascades] = {};

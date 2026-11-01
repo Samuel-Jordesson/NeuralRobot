@@ -127,7 +127,7 @@ void main() {
         rough = 0.38 + 0.1 * texture(uNoise, l.xz * (20.0 / 128.0)).b;
     }
 
-    applyPaint(vPos, normalize(vNormal), albedo, N, rough);
+    if (uMaterial == 0 || uMaterial == 5) applyPaint(vPos, normalize(vNormal), albedo, N, rough); // só chão e terreno
     vec3 col = shadePBR(albedo, metal, rough, 1.0, N, vPos);
     FragColor = vec4(col, 1.0);
 }

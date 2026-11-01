@@ -1,0 +1,11 @@
+# Cenario (editor livre). Angulos em graus.
+prop mesa1 2.2 0 3 90 1
+prop mesa2 4.3 0 3 90 1
+door -0.75 0 21.8 1.5 2.4
+nodoors
+spawn -6 0 41.5 163.061
+spawn 6.5 0 44.5 -164.021
+spawn 0 0 45.5 180
+spawn -10.5 0 35 141.499
+spawn 10.5 0 37 -145.364
+start 0 0 0 0

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -20,13 +21,14 @@ glm::quat rotOf(const glm::mat4& m) { return glm::normalize(glm::quat_cast(glm::
 float ease(float f) { return f * f * (3.0f - 2.0f * f); } // entra e sai devagar entre as chaves
 
 // Chaves vizinhas de t numa lista ordenada: índices (i, j) e fração entre elas.
-template <class K> bool around(const std::vector<K>& ks, float t, size_t& i, size_t& j, float& f) {
+template <class K> bool around(const std::vector<K>& ks, float t, size_t& i, size_t& j, float& f, bool linear = false) {
     if (ks.empty()) return false;
     if (t <= ks.front().t) { i = j = 0; f = 0.0f; return true; }
     if (t >= ks.back().t) { i = j = ks.size() - 1; f = 0.0f; return true; }
     for (j = 1; j < ks.size() && ks[j].t < t; ++j) {}
     i = j - 1;
-    f = ease((t - ks[i].t) / std::max(1e-4f, ks[j].t - ks[i].t));
+    f = (t - ks[i].t) / std::max(1e-4f, ks[j].t - ks[i].t);
+    if (!linear) f = ease(f);
     return true;
 }
 
@@ -47,11 +49,11 @@ Pose AnimClip::sample(float t) const {
     for (int b = 0; b < BONE_COUNT; ++b) {
         size_t i, j;
         float f;
-        if (around(bones[b], t, i, j, f)) p.rot[b] = glm::normalize(glm::slerp(bones[b][i].q, bones[b][j].q, f));
+        if (around(bones[b], t, i, j, f, linear)) p.rot[b] = glm::normalize(glm::slerp(bones[b][i].q, bones[b][j].q, f));
     }
     size_t i, j;
     float f;
-    if (around(root, t, i, j, f)) p.rootOffset = glm::mix(root[i].p, root[j].p, f);
+    if (around(root, t, i, j, f, linear)) p.rootOffset = glm::mix(root[i].p, root[j].p, f);
     return p;
 }
 
@@ -64,14 +66,18 @@ bool AnimClip::hasAnyKey() const {
 bool AnimClip::save(const std::string& path) const {
     std::ofstream o(path);
     if (!o) return false;
-    o << "# animacao do editor (GA)\\n";
-    o << "len " << length << "\\nloop " << (loop ? 1 : 0) << "\\nprop " << prop << "\\n";
+    o << "# animacao do editor (GA)\n";
+    o << "len " << length << "\nloop " << (loop ? 1 : 0) << "\nprop " << prop << "\nlinear " << (linear ? 1 : 0) << "\n";
     for (int b = 0; b < BONE_COUNT; ++b)
-        for (const BoneKey& k : bones[b]) o << "key " << b << " " << k.t << " " << k.q.x << " " << k.q.y << " " << k.q.z << " " << k.q.w << "\\n";
-    for (const RootKey& k : root) o << "root " << k.t << " " << k.p.x << " " << k.p.y << " " << k.p.z << "\\n";
+        for (const BoneKey& k : bones[b]) o << "key " << b << " " << k.t << " " << k.q.x << " " << k.q.y << " " << k.q.z << " " << k.q.w << "\n";
+    for (const CamKey& k : camKeys)
+        o << "cam " << k.t << " " << k.p.x << " " << k.p.y << " " << k.p.z << " " << k.q.x << " " << k.q.y << " " << k.q.z << " "
+          << k.q.w << " " << k.focal << " " << k.focus << "\n";
+    for (const DevKey& k : device) o << "dev " << k.t << " " << k.ori.x << " " << k.ori.y << " " << k.ori.z << "\n";
+    for (const RootKey& k : root) o << "root " << k.t << " " << k.p.x << " " << k.p.y << " " << k.p.z << "\n";
     for (const PropKey& k : propKeys)
         o << "pkey " << k.t << " " << (k.hand ? 1 : 0) << " " << k.p.x << " " << k.p.y << " " << k.p.z << " " << k.q.x << " " << k.q.y
-          << " " << k.q.z << " " << k.q.w << "\\n";
+          << " " << k.q.z << " " << k.q.w << "\n";
     return (bool)o;
 }
 
@@ -88,6 +94,12 @@ bool AnimClip::load(const std::string& path) {
         if (k == "len") l >> length;
         else if (k == "loop") { int v; l >> v; loop = v != 0; }
         else if (k == "prop") l >> prop;
+        else if (k == "linear") { int v; l >> v; linear = v != 0; }
+        else if (k == "cam") {
+            CamKey c;
+            l >> c.t >> c.p.x >> c.p.y >> c.p.z >> c.q.x >> c.q.y >> c.q.z >> c.q.w >> c.focal >> c.focus;
+            camKeys.push_back(c);
+        } else if (k == "dev") { DevKey d; l >> d.t >> d.ori.x >> d.ori.y >> d.ori.z; device.push_back(d); }
         else if (k == "key") {
             int b;
             BoneKey bk;
@@ -109,6 +121,7 @@ bool AnimClip::load(const std::string& path) {
     for (auto& v : bones) std::sort(v.begin(), v.end(), byT);
     std::sort(root.begin(), root.end(), byT);
     std::sort(propKeys.begin(), propKeys.end(), byT);
+    std::sort(camKeys.begin(), camKeys.end(), byT);
     return true;
 }
 
@@ -116,6 +129,7 @@ bool AnimClip::load(const std::string& path) {
 void AnimEditor::begin(const std::string& root, const glm::vec3& stagePos, float stageYaw) {
     active_ = true;
     root_ = root;
+    layout_.init(root + "/editor_animacao.ini", 0.18f, 0.22f, 0.28f);
     stagePos_ = stagePos;
     stageYaw_ = stageYaw;
     playing_ = false;
@@ -123,6 +137,7 @@ void AnimEditor::begin(const std::string& root, const glm::vec3& stagePos, float
     std::snprintf(nameBuf_, sizeof(nameBuf_), "%s", clip_.name.c_str());
     scanLibrary();
     status_ = "Clique num osso (bolinha) e arraste para girar. Shift + arrastar o quadril move o corpo.";
+    if (std::getenv("GA_MOCAP")) serverOk_ = serverTried_ = mocap_.startServer(root_); // depuração: já escuta a câmera
 }
 
 glm::mat4 AnimEditor::stageMatrix() const {
@@ -130,7 +145,7 @@ glm::mat4 AnimEditor::stageMatrix() const {
 }
 
 AnimEditor::Rect AnimEditor::viewRect() const {
-    return {300.0f, 56.0f, winW_ - 320.0f, winH_ - 230.0f};
+    return {layout_.l * winW_, 56.0f, winW_ * (1.0f - layout_.r), winH_ * (1.0f - layout_.b)};
 }
 
 bool AnimEditor::project(const glm::vec3& p, float& sx, float& sy) const {
@@ -209,7 +224,8 @@ void AnimEditor::update(GLFWwindow* win, float dt, const Skeleton& sk, glm::mat4
     const Rect vr = viewRect();
     double mx, my;
     glfwGetCursorPos(win, &mx, &my);
-    const bool inView = mx >= vr.x0 && mx <= vr.x1 && my >= vr.y0 && my <= vr.y1 && !io.WantCaptureMouse;
+    const bool inView = mx >= vr.x0 + 6 && mx <= vr.x1 - 6 && my >= vr.y0 && my <= vr.y1 - 6 && !io.WantCaptureMouse &&
+                        !layout_.dragging();
     const bool lmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     const bool rmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     const bool mmb = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
@@ -238,6 +254,27 @@ void AnimEditor::update(GLFWwindow* win, float dt, const Skeleton& sk, glm::mat4
     const glm::vec3 shift((vr.x0 + vr.x1) / winW_ - 1.0f, 1.0f - (vr.y0 + vr.y1) / winH_, 0.0f);
     proj_ = glm::translate(glm::mat4(1.0f), shift) * glm::scale(glm::mat4(1.0f), glm::vec3(rw / winW_, rh / winH_, 1.0f)) *
             glm::perspective(glm::radians(45.0f), rw / std::max(1.0f, rh), 0.05f, 500.0f);
+    if (pilot_) {
+        // vista pela câmera de cena: botão direito gira, botão do meio desloca, rodinha anda para a frente
+        static bool rot = false, pan = false, wasEditing = false;
+        if (rmb && !rmbWas_ && inView) rot = true;
+        if (!rmb) rot = false;
+        if (mmb && !mmbWas_ && inView) pan = true;
+        if (!mmb) pan = false;
+        orbiting = panning = false;
+        const glm::vec3 r = camRot_ * glm::vec3(1, 0, 0), u = camRot_ * glm::vec3(0, 1, 0), f = camRot_ * glm::vec3(0, 0, -1);
+        bool editing = rot || pan;
+        if (rot) camRot_ = glm::normalize(glm::angleAxis(-dx * 0.004f, glm::vec3(0, 1, 0)) * glm::angleAxis(-dy * 0.004f, r) * camRot_);
+        if (pan) camPos_ += (-r * dx + u * dy) * 0.004f;
+        if (inView && io.MouseWheel != 0.0f) { camPos_ += f * io.MouseWheel * 0.25f; editing = true; camEdited_ = true; if (autoKey_) setCamKey(); }
+        if (rot || pan) camEdited_ = true;
+        if (wasEditing && !editing && autoKey_) setCamKey();
+        wasEditing = rot || pan;
+        view_ = cineView();
+        eye = cineEye();
+        proj_ = glm::translate(glm::mat4(1.0f), shift) * glm::scale(glm::mat4(1.0f), glm::vec3(rw / winW_, rh / winH_, 1.0f)) *
+                cineProj(rw / std::max(1.0f, rh));
+    }
     view = view_;
     proj = proj_;
 
@@ -263,6 +300,36 @@ void AnimEditor::update(GLFWwindow* win, float dt, const Skeleton& sk, glm::mat4
         poseEdited_ = false;
     }
     if (!poseEdited_) pose_ = clip_.sample(time_);
+    // câmera ao vivo: o boneco copia a pessoa (gravando ou só olhando)
+    mocap_.poll(sk, dt);
+    if (mocapFollow_ && mocap_.live() && !playing_) pose_ = mocap_.pose();
+    // câmera de cena: segue as chaves (tocando ou parado num ponto), a não ser que esteja sendo mexida
+    if (playing_) camEdited_ = false;
+    if (!camEdited_ && !clip_.camKeys.empty()) {
+        size_t i, j;
+        float f;
+        if (around(clip_.camKeys, time_, i, j, f, clip_.linear)) {
+            const auto &a = clip_.camKeys[i], &b = clip_.camKeys[j];
+            camPos_ = glm::mix(a.p, b.p, f);
+            camRot_ = glm::normalize(glm::slerp(a.q, b.q, f));
+            focal_ = a.focal + (b.focal - a.focal) * f;
+            focus_ = a.focus + (b.focus - a.focus) * f;
+        }
+    }
+    // celular como câmera (AR): o giro do aparelho no mundo vira o giro da câmera de cena
+    if (arCam_ && mocap_.oriLive()) {
+        const glm::vec3 o = glm::radians(mocap_.orientation());
+        const glm::quat dev = glm::angleAxis(o.x, glm::vec3(0, 0, 1)) * glm::angleAxis(o.y, glm::vec3(1, 0, 0)) *
+                              glm::angleAxis(o.z, glm::vec3(0, 1, 0)); // W3C: Z(alpha) X(beta) Y(gamma), terra = leste/norte/cima
+        if (!arInit_) { arRef_ = dev; arBase_ = camRot_; arInit_ = true; }
+        // terra (leste, norte, cima) -> nosso mundo (X, -Z, Y); depois para o espaço do palco
+        static const glm::quat toWorld = glm::quat_cast(glm::mat3(glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0)));
+        glm::quat d = toWorld * (dev * glm::inverse(arRef_)) * glm::inverse(toWorld);
+        d = glm::inverse(stageRot()) * d * stageRot();
+        camRot_ = glm::normalize(glm::slerp(camRot_, glm::normalize(d * arBase_), 0.6f));
+        camEdited_ = true;
+    } else if (!arCam_) arInit_ = false;
+    if (mocap_.recording()) recCam_.push_back({mocap_.recordedTime(), camPos_, camRot_, focal_, focus_});
 
     // ossos na tela
     const glm::mat4 M = stageMatrix();
@@ -272,8 +339,28 @@ void AnimEditor::update(GLFWwindow* win, float dt, const Skeleton& sk, glm::mat4
         bool ok = project(glm::vec3(M * globals_[b][3]), sx, sy);
         jointScreen_[b] = glm::vec3(sx, sy, ok ? 1.0f : 0.0f);
     }
+    // câmera de cena na vista: arrastar o ícone move a câmera
+    {
+        float sx, sy;
+        bool ok = !pilot_ && project(cineEye(), sx, sy);
+        camScreen_ = glm::vec3(sx, sy, ok ? 1.0f : 0.0f);
+        if (ok && lmb && !lmbWas_ && inView && glm::length(glm::vec2(sx, sy) - glm::vec2((float)mx, (float)my)) < 16.0f) {
+            camGrab_ = true;
+            playing_ = false;
+            status_ = "Movendo a câmera de cena (solte para marcar a chave, se Auto-chave estiver ligado)";
+        }
+        if (camGrab_ && lmb && (dx != 0.0f || dy != 0.0f)) {
+            const glm::mat3 inv = glm::transpose(glm::mat3(stageMatrix()));
+            camPos_ += (inv * right * dx - inv * up * dy) * camDist_ * 0.0016f;
+            camEdited_ = true;
+        }
+        if (camGrab_ && !lmb) {
+            camGrab_ = false;
+            if (autoKey_) setCamKey();
+        }
+    }
     // clicar num osso seleciona e começa a girar (Shift no quadril: move o corpo)
-    if (lmb && !lmbWas_ && inView) {
+    if (lmb && !lmbWas_ && inView && !camGrab_) {
         int best = -1;
         float bestD = 14.0f;
         for (int b = 0; b < BONE_COUNT; ++b) {
@@ -361,6 +448,7 @@ void AnimEditor::timelineUi(float x0, float y0, float w, float h) {
 }
 
 bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunNames) {
+    layout_.handle(56.0f, winW_, winH_); // divisórias arrastáveis entre os painéis
     bool back = false;
     const ImGuiWindowFlags fixed = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
@@ -380,7 +468,7 @@ bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunN
     ImGui::SameLine();
     if (ImGui::Button(dirty_ ? "Salvar *" : "Salvar")) {
         std::string n = clip_.name.empty() ? "animacao" : clip_.name;
-        for (char& ch : n) if (ch == ' ' || ch == '/' || ch == '\\\\') ch = '_';
+        for (char& ch : n) if (ch == ' ' || ch == '/' || ch == '\\') ch = '_';
         clip_.name = n;
         std::snprintf(nameBuf_, sizeof(nameBuf_), "%s", n.c_str());
         file_ = (fs::path(root_) / "anims" / (n + ".anim")).string();
@@ -497,7 +585,7 @@ bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunN
                     glm::vec3 e = glm::degrees(glm::eulerAngles(k->q));
                     if (ImGui::DragFloat3("Giro", &e.x, 0.5f)) { k->q = glm::normalize(glm::quat(glm::radians(e))); dirty_ = true; }
                     ImGui::PopItemWidth();
-                    ImGui::TextDisabled("Solto: o objeto voa até essa posição\\n(ex.: arma jogada para outra pessoa).");
+                    ImGui::TextDisabled("Solto: o objeto voa até essa posição\n(ex.: arma jogada para outra pessoa).");
                 }
                 if (ImGui::Button("Apagar chave do objeto", ImVec2(-1, 0))) {
                     float t0 = k->t;
@@ -509,6 +597,10 @@ bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunN
             }
         }
     }
+    ImGui::Separator();
+    cameraUi();
+    ImGui::Separator();
+    mocapUi();
     ImGui::Separator();
     ImGui::TextWrapped("Vista: botão direito gira a câmera, rodinha aproxima, botão do meio arrasta. "
                        "Atalhos: Espaço toca/pausa, K insere keyframe, setas andam quadro a quadro, Delete apaga keyframe.");
@@ -550,11 +642,48 @@ bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunN
     if (ImGui::Button("Apagar keyframe")) deleteKeysAt(time_, false);
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, h = std::max(60.0f, ImGui::GetContentRegionAvail().y - 4.0f);
-    timelineUi(p.x, p.y, w, h);
+    // prévia da câmera de cena (16:9) à direita da linha do tempo
+    float pw = 0.0f;
+    if (preview_ && previewTex_) {
+        pw = std::min(h * 16.0f / 9.0f, w * 0.5f);
+        float ph = pw * 9.0f / 16.0f;
+        ImVec2 a(p.x + w - pw, p.y);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddImage((ImTextureID)(intptr_t)previewTex_, a, ImVec2(a.x + pw, a.y + ph), ImVec2(0, 1), ImVec2(1, 0));
+        dl->AddRect(a, ImVec2(a.x + pw, a.y + ph), IM_COL32(240, 160, 40, 255));
+        char cap[64];
+        std::snprintf(cap, sizeof(cap), "Câmera  %.0f mm  f/%.1f  foco %.1f m", focal_, fstop_, focus_);
+        dl->AddRectFilled(ImVec2(a.x, a.y), ImVec2(a.x + ImGui::CalcTextSize(cap).x + 10, a.y + ImGui::GetTextLineHeight() + 4),
+                          IM_COL32(0, 0, 0, 150));
+        dl->AddText(ImVec2(a.x + 5, a.y + 2), IM_COL32(255, 255, 255, 255), cap);
+        pw += 10.0f;
+    }
+    timelineUi(p.x, p.y, w - pw, h);
     ImGui::End();
 
-    // ---- ossos desenhados por cima da vista
+    // ---- câmera de cena na vista: corpo e cone de visão (o que aparece na prévia)
     ImDrawList* fg = ImGui::GetBackgroundDrawList();
+    if (!pilot_) {
+        const glm::vec3 e = cineEye();
+        const glm::quat q = stageRot() * camRot_;
+        const float tx = 18.0f / focal_, ty = tx * 9.0f / 16.0f, d = 0.6f;
+        glm::vec3 c[4];
+        for (int i = 0; i < 4; ++i) c[i] = e + q * glm::vec3((i & 1 ? 1 : -1) * tx * d, (i & 2 ? 1 : -1) * ty * d, -d);
+        float ex, ey;
+        ImVec2 cs[4];
+        bool ok = project(e, ex, ey);
+        for (int i = 0; i < 4; ++i) { float x, y; ok = ok && project(c[i], x, y); cs[i] = ImVec2(x, y); }
+        const ImU32 col = camGrab_ ? IM_COL32(255, 210, 90, 255) : IM_COL32(240, 160, 40, 230);
+        if (ok) {
+            for (int i = 0; i < 4; ++i) fg->AddLine(ImVec2(ex, ey), cs[i], col, 1.5f);
+            fg->AddLine(cs[0], cs[1], col, 1.5f);
+            fg->AddLine(cs[1], cs[3], col, 1.5f);
+            fg->AddLine(cs[3], cs[2], col, 1.5f);
+            fg->AddLine(cs[2], cs[0], col, 1.5f);
+            fg->AddCircleFilled(ImVec2(ex, ey), 7.0f, col);
+            fg->AddText(ImVec2(ex + 10, ey - 8), col, "Câmera");
+        }
+    }
     for (int b = 0; b < BONE_COUNT; ++b) {
         int pb = sk.parent[b];
         if (pb >= 0 && jointScreen_[b].z > 0.5f && jointScreen_[pb].z > 0.5f)
@@ -569,4 +698,206 @@ bool AnimEditor::drawUi(const Skeleton& sk, const std::vector<std::string>& gunN
         if (sel) fg->AddText(ImVec2(jointScreen_[b].x + 10, jointScreen_[b].y - 8), kAccent, sk.name[b]);
     }
     return back;
+}
+
+// ---------------------------------------------------------------- captura de movimento (câmera)
+void AnimEditor::bakeRecording() {
+    const auto& fr = mocap_.frames();
+    if (fr.size() < 2) { status_ = "Gravação curta demais"; return; }
+    for (int b = 0; b < kBodyBones; ++b) clip_.bones[b].clear(); // os dedos continuam como estavam
+    clip_.root.clear();
+    clip_.device.clear();
+    float last = -1.0f;
+    for (const MocapLive::Frame& f : fr) {
+        if (f.t - last < 1.0f / 60.0f) continue; // no máximo 60 chaves por segundo
+        last = f.t;
+        for (int b = 0; b < kBodyBones; ++b) clip_.bones[b].push_back({f.t, f.pose.rot[b]});
+        clip_.root.push_back({f.t, f.pose.rootOffset});
+        if (f.hasOri) clip_.device.push_back({f.t, f.ori});
+    }
+    if (arCam_ && recCam_.size() > 1) { // câmera mexida pelo celular durante a gravação
+        clip_.camKeys.clear();
+        float lastC = -1.0f;
+        for (const auto& k : recCam_)
+            if (k.t - lastC >= 1.0f / 60.0f) { clip_.camKeys.push_back(k); lastC = k.t; }
+    }
+    clip_.length = std::max(0.1f, fr.back().t);
+    clip_.loop = false;
+    clip_.linear = true;
+    time_ = 0.0f;
+    playing_ = false;
+    poseEdited_ = false;
+    dirty_ = true;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "Gravado: %.1f s (%zu quadros%s). Salve para guardar a animação.", clip_.length,
+                  clip_.root.size(), clip_.device.empty() ? "" : ", com giroscópio");
+    status_ = buf;
+}
+
+void AnimEditor::mocapUi() {
+    ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.16f, 1), "Captura de movimento (câmera)");
+    auto ensureServer = [&]() {
+        if (!serverOk_) {
+            serverOk_ = mocap_.startServer(root_);
+            serverTried_ = true;
+            if (!serverOk_) status_ = "Não deu para iniciar o servidor (o Node.js está instalado?)";
+        }
+        return serverOk_;
+    };
+    const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Câmera do PC", ImVec2(bw, 0)) && ensureServer()) {
+        mocap_.openPcCamera();
+        showQr_ = false;
+        status_ = "Abrindo a câmera no navegador: clique em \"Ativar câmera\" e permita o acesso.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(showQr_ ? "Esconder QR" : "Câmera do celular", ImVec2(bw, 0)) && (showQr_ || ensureServer())) showQr_ = !showQr_;
+
+    if (showQr_) {
+        const QrCode& qr = mocap_.phoneQr();
+        ImGui::TextWrapped("Leia com a câmera do celular (mesma rede wi-fi):");
+        const float side = std::min(ImGui::GetContentRegionAvail().x, 260.0f);
+        const float cell = side / (qr.size + 8);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + side, p.y + side), IM_COL32(255, 255, 255, 255));
+        for (int y = 0; y < qr.size; ++y)
+            for (int x = 0; x < qr.size; ++x)
+                if (qr.at(x, y)) {
+                    ImVec2 a(p.x + (x + 4) * cell, p.y + (y + 4) * cell);
+                    dl->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell), IM_COL32(0, 0, 0, 255));
+                }
+        ImGui::Dummy(ImVec2(side, side));
+        ImGui::TextDisabled("%s", mocap_.phoneUrl().c_str());
+        ImGui::TextWrapped("O navegador vai avisar que a conexão não é particular (o certificado é deste PC): "
+                           "toque em Avançado > Continuar. Depois toque em Ativar câmera e permita câmera e movimento.");
+    }
+
+    if (serverTried_) {
+        if (mocap_.live())
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1), "Ao vivo: %s, %.0f quadros/s", mocap_.source(), mocap_.fps());
+        else
+            ImGui::TextDisabled("%s", serverOk_ ? "Esperando a câmera..." : "Servidor desligado");
+    }
+    ImGui::Checkbox("Boneco copia a câmera ao vivo", &mocapFollow_);
+    ImGui::Checkbox("Compensar o giro do celular", &mocap_.useGyro);
+    ImGui::Checkbox("Andar pelo palco (experimental)", &mocap_.moveRoot);
+    ImGui::SetNextItemWidth(-90);
+    ImGui::SliderFloat("Suavizar", &mocap_.smoothing, 0.0f, 0.9f, "%.2f");
+    if (ImGui::Button("Calibrar (posição e giro atuais = frente)", ImVec2(-1, 0))) mocap_.calibrate();
+
+    // gravar / parar
+    const bool rec = mocap_.recording();
+    ImGui::PushStyleColor(ImGuiCol_Button, rec ? ImVec4(0.75f, 0.18f, 0.15f, 1) : ImVec4(0.55f, 0.12f, 0.1f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.25f, 0.2f, 1));
+    char label[64];
+    if (rec) std::snprintf(label, sizeof(label), "Parar gravação (%.1f s)", mocap_.recordedTime());
+    else std::snprintf(label, sizeof(label), "Gravar movimento");
+    if (ImGui::Button(label, ImVec2(-1, 36))) {
+        if (rec) {
+            mocap_.stopRecording();
+            bakeRecording();
+        } else if (!mocap_.live()) {
+            status_ = "Ative uma câmera primeiro (nenhum quadro chegando)";
+        } else {
+            mocap_.startRecording();
+            recCam_.clear();
+            status_ = "Gravando: faça os movimentos e clique em Parar.";
+        }
+    }
+    ImGui::PopStyleColor(2);
+    if (rec) {
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        ImVec2 c(viewRect().x0 + 24, viewRect().y0 + 24);
+        if (std::fmod(ImGui::GetTime(), 1.0) < 0.6) dl->AddCircleFilled(c, 9, IM_COL32(230, 40, 30, 255));
+        dl->AddText(ImVec2(c.x + 16, c.y - 8), IM_COL32(255, 255, 255, 255), "GRAVANDO");
+    }
+}
+
+// ---------------------------------------------------------------- câmera de cena (filmagem)
+glm::quat AnimEditor::stageRot() const { return glm::angleAxis(stageYaw_, glm::vec3(0, 1, 0)); }
+
+glm::vec3 AnimEditor::cineEye() const { return glm::vec3(stageMatrix() * glm::vec4(camPos_, 1.0f)); }
+
+glm::mat4 AnimEditor::cineView() const {
+    glm::mat4 w = glm::translate(glm::mat4(1.0f), cineEye()) * glm::mat4_cast(stageRot() * camRot_);
+    return glm::inverse(w);
+}
+
+// Lente de cinema: sensor de 36 mm de largura (super 35 / full frame) e imagem 16:9.
+glm::mat4 AnimEditor::cineProj(float aspect) const {
+    const float halfW = 18.0f / std::max(5.0f, focal_);          // tan(meio campo horizontal) da imagem 16:9
+    const float halfH = halfW * 9.0f / 16.0f;
+    // aspecto diferente de 16:9: mostra pelo menos todo o quadro 16:9
+    const float fovY = 2.0f * std::atan(std::max(halfH, halfW / std::max(0.1f, aspect)));
+    return glm::perspective(fovY, aspect, 0.05f, 500.0f);
+}
+
+void AnimEditor::setCamKey() {
+    upsert(clip_.camKeys, time_, [&](float tt) { return AnimClip::CamKey{tt, camPos_, camRot_, focal_, focus_}; });
+    for (auto& k : clip_.camKeys)
+        if (std::fabs(k.t - time_) < 0.02f) { k.p = camPos_; k.q = camRot_; k.focal = focal_; k.focus = focus_; }
+    camEdited_ = false;
+    dirty_ = true;
+}
+
+void AnimEditor::cameraUi() {
+    ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.16f, 1), "Câmera de cena");
+    ImGui::Checkbox("Prévia embaixo", &preview_);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Ver pela câmera", &pilot_) && pilot_)
+        status_ = "Vendo pela câmera: botão direito gira, botão do meio desloca, rodinha anda para a frente.";
+    ImGui::PushItemWidth(-110);
+    bool ch = false, done = false;
+    ch |= ImGui::DragFloat3("Posição##cam", &camPos_.x, 0.01f);
+    done |= ImGui::IsItemDeactivatedAfterEdit();
+    glm::vec3 e = glm::degrees(glm::eulerAngles(camRot_));
+    if (ImGui::DragFloat3("Giro##cam", &e.x, 0.3f)) { camRot_ = glm::normalize(glm::quat(glm::radians(e))); ch = true; }
+    done |= ImGui::IsItemDeactivatedAfterEdit();
+    ch |= ImGui::SliderFloat("Lente (mm)", &focal_, 12.0f, 200.0f, "%.0f mm", ImGuiSliderFlags_Logarithmic);
+    done |= ImGui::IsItemDeactivatedAfterEdit();
+    // lentes comuns
+    for (int mm : {18, 24, 35, 50, 85, 135}) {
+        if (mm != 18) ImGui::SameLine();
+        if (ImGui::SmallButton((std::to_string(mm) + "##lente").c_str())) { focal_ = (float)mm; ch = done = true; }
+    }
+    ImGui::Checkbox("Desfoque (profundidade de campo)", &dof_);
+    if (dof_) {
+        ch |= ImGui::SliderFloat("Foco (m)", &focus_, 0.2f, 60.0f, "%.2f m", ImGuiSliderFlags_Logarithmic);
+        done |= ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SliderFloat("Abertura f/", &fstop_, 1.2f, 22.0f, "f/%.1f", ImGuiSliderFlags_Logarithmic);
+        if (ImGui::Button("Focar no personagem", ImVec2(-1, 0))) {
+            focus_ = glm::length(camPos_ - glm::vec3(globals_[CHEST][3]));
+            ch = done = true;
+        }
+    }
+    ImGui::PopItemWidth();
+    if (ch) camEdited_ = true;
+    if (done && autoKey_) setCamKey();
+    const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Câmera = minha vista", ImVec2(bw, 0))) {
+        // põe a câmera de cena onde a vista do editor está
+        glm::mat4 inv = glm::inverse(view_);
+        const glm::mat4 toStage = glm::inverse(stageMatrix());
+        camPos_ = glm::vec3(toStage * inv[3]);
+        camRot_ = glm::normalize(glm::inverse(stageRot()) * glm::quat_cast(glm::mat3(inv)));
+        camEdited_ = true;
+        if (autoKey_) setCamKey();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Chave da câmera", ImVec2(bw, 0))) setCamKey();
+    if (!clip_.camKeys.empty()) {
+        ImGui::TextDisabled("%zu chaves de câmera", clip_.camKeys.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Apagar todas")) { clip_.camKeys.clear(); dirty_ = true; }
+    }
+    if (ImGui::Checkbox("Celular move a câmera (AR)", &arCam_)) {
+        arInit_ = false;
+        if (arCam_) status_ = mocap_.oriLive() ? "Gire o celular: a câmera gira junto (o giro atual é o de agora)."
+                                                : "Abra a página no celular (Câmera do celular) para usar o giroscópio.";
+    }
+    if (arCam_) {
+        ImGui::TextDisabled("%s", mocap_.oriLive() ? "Giroscópio chegando" : "Esperando o giroscópio do celular...");
+        if (ImGui::SmallButton("Recentrar")) arInit_ = false;
+    }
 }

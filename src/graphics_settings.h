@@ -37,6 +37,9 @@ struct GraphicsSettings {
     float sunAzimuth = 25.0f;   // graus, gira o caminho do sol
     float fogDensity = 1.0f;
     bool clouds = true;
+    // vento (tecidos e o que mais balança): liga, força (m/s), direção (graus, 0 = para +Z) e rajadas (0..1)
+    bool wind = false;
+    float windStrength = 2.5f, windDir = 30.0f, windGust = 0.5f;
     float cloudCoverage = 0.45f;
     bool cloudShadows = true;
 

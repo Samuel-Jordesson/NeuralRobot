@@ -27,3 +27,7 @@ Jogo-final/
 
 # modelo grande demais para o GitHub (fica só no computador)
 assets/Untitled.glb
+tools/mocap/cert/
+editor_*.ini
+assets/casa.glb
+assets/container.glb

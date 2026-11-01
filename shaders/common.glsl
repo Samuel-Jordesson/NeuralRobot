@@ -45,6 +45,30 @@ uniform vec4 uLightPos[MAX_LIGHTS];   // xyz, alcance
 uniform vec4 uLightColor[MAX_LIGHTS]; // rgb já com o brilho, tipo
 uniform vec4 uLightDir[MAX_LIGHTS];   // xyz direção do spot, cosseno do cone interno
 uniform float uLightOuter[MAX_LIGHTS]; // cosseno do cone externo (área: tamanho do painel)
+uniform int uLightShadow[MAX_LIGHTS];  // cubo de sombra da luz (0..3) ou -1 sem sombra
+uniform samplerCube uLShadow0, uLShadow1, uLShadow2, uLShadow3; // distância até a luz
+
+float lightShadowDist(int s, vec3 v) {
+    if (s == 0) return texture(uLShadow0, v).r;
+    if (s == 1) return texture(uLShadow1, v).r;
+    if (s == 2) return texture(uLShadow2, v).r;
+    return texture(uLShadow3, v).r;
+}
+// 1 = iluminado, 0 = na sombra (borda suave com 5 amostras)
+float lightShadow(int s, vec3 P, vec3 N, vec3 lp) {
+    vec3 v = P + N * 0.02 - lp;
+    float d = length(v);
+    vec3 dir = v / d;
+    vec3 t1 = normalize(cross(dir, abs(dir.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
+    vec3 t2 = cross(dir, t1);
+    const vec2 k[5] = vec2[](vec2(0.0), vec2(1.0, 0.3), vec2(-0.3, 1.0), vec2(-1.0, -0.3), vec2(0.3, -1.0));
+    float sum = 0.0;
+    for (int i = 0; i < 5; ++i) {
+        vec3 q = dir + (t1 * k[i].x + t2 * k[i].y) * 0.006;
+        sum += d - 0.04 <= lightShadowDist(s, q) ? 1.0 : 0.0;
+    }
+    return sum / 5.0;
+}
 
 const float PI = 3.14159265;
 
@@ -204,6 +228,7 @@ vec3 editorLights(vec3 albedo, float metal, float rough, float occl, vec3 N, vec
             att = window / (dist2 + sz * sz * 0.5) * max(dot(-L, uLightDir[i].xyz), 0.0) * (1.0 + sz);
         }
         if (att <= 0.0) continue;
+        if (uLightShadow[i] >= 0) att *= lightShadow(uLightShadow[i], P, N, uLightPos[i].xyz);
         sum += directLight(albedo, metal, rough, N, V, L, F0) * col * att;
     }
     return sum;
