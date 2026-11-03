@@ -1129,7 +1129,7 @@ void Renderer::drawHud(const RenderScene& s) {
             glm::vec2 ndc = glm::vec2(clip) / clip.w;
             float size = std::round(std::max(30.0f, h_ * 0.042f));
             glm::vec2 px((ndc.x * 0.5f + 0.5f) * w_, (0.5f - ndc.y * 0.5f) * h_);
-            hud_.set("uType", 1);
+            hud_.set("uType", 1 + std::clamp(s.promptStyle, 0, 2)); // 1 E, 2 X do Xbox, 3 quadrado do PS
             hud_.set("uAlpha", s.promptAlpha);
             hud_.set("uRect", glm::vec4(std::round(px.x - size * 0.5f), std::round(px.y - size * 0.5f), size, size));
             glDrawArrays(GL_TRIANGLES, 0, 6);

@@ -22,6 +22,7 @@ void drawFps(float fps, float frameMs);
 // HUD do combate: vida, inimigos, marcador de acerto e avisos.
 struct CombatHud {
     float health = 100.0f, hurtFlash = 0.0f, hitMarker = 0.0f;
+    int padStyle = 0; // 0 teclado, 1 Xbox, 2 PlayStation (nome do botão nas dicas)
     bool hitKill = false;
     int alive = 0, total = 0, kills = 0, wave = 1;
     bool inArena = false, dead = false;

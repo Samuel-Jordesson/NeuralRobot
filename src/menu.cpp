@@ -162,6 +162,7 @@ bool init(GLFWwindow* win, bool installCallbacks) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // controle navega nos menus (A confirma, B volta)
     g_win = win;
 
 
@@ -634,7 +635,10 @@ void drawCombatHud(const CombatHud& h) {
         dl->AddText(ImVec2((W - ss.x) * 0.5f, H * 0.3f + ts.y + 8 * sc), IM_COL32(255, 255, 255, 220), small);
     };
     if (!h.dead && (h.coverHint || h.inCover)) { // dica de tecla embaixo da mira
-        const char* tip = h.inCover ? "Q  sair da cobertura" : "Q  cobertura";
+        static const char* keys[] = {"Q", "B", "O"};
+        const std::string k = keys[std::clamp(h.padStyle, 0, 2)];
+        const std::string tipS = k + (h.inCover ? "  sair da cobertura" : "  cobertura");
+        const char* tip = tipS.c_str();
         ImVec2 ts = ImGui::CalcTextSize(tip);
         ImVec2 p((W - ts.x) * 0.5f, H * 0.62f);
         dl->AddRectFilled(ImVec2(p.x - 10 * sc, p.y - 5 * sc), ImVec2(p.x + ts.x + 10 * sc, p.y + ts.y + 5 * sc),

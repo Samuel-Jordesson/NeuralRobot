@@ -1125,7 +1125,53 @@ int main(int argc, char** argv) {
         glfwPollEvents();
 
         // --- entrada: Esc abre/fecha o menu (o jogo pausa enquanto ele está aberto)
-        bool esc = glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        // controle (Xbox, PlayStation ou genérico com mapeamento do SDL): o primeiro conectado
+        GLFWgamepadstate pad{};
+        bool padOn = false;
+        static int padStyle = 1; // 1 Xbox/genérico, 2 PlayStation
+        static bool usingPad = false;
+        for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST && !padOn; ++j)
+            if (glfwJoystickIsGamepad(j) && glfwGetGamepadState(j, &pad)) {
+                padOn = true;
+                std::string n = glfwGetGamepadName(j) ? glfwGetGamepadName(j) : "";
+                for (char& ch : n) ch = (char)std::tolower((unsigned char)ch);
+                const bool ps = n.find("ps") != std::string::npos || n.find("sony") != std::string::npos ||
+                                n.find("dualshock") != std::string::npos || n.find("dualsense") != std::string::npos ||
+                                n.find("wireless controller") != std::string::npos;
+                padStyle = ps ? 2 : 1;
+            }
+        auto padBtn = [&](int b) { return padOn && pad.buttons[b] == GLFW_PRESS; };
+        auto padAxis = [&](int a, float dead = 0.18f) {
+            if (!padOn) return 0.0f;
+            float v = pad.axes[a];
+            return std::fabs(v) < dead ? 0.0f : (v - std::copysign(dead, v)) / (1.0f - dead);
+        };
+        if (padOn) { // ícone do botão: muda para o do controle quando ele é usado, volta ao teclado se mexer nele
+            bool any = std::fabs(pad.axes[0]) > 0.3f || std::fabs(pad.axes[1]) > 0.3f || std::fabs(pad.axes[2]) > 0.3f ||
+                       std::fabs(pad.axes[3]) > 0.3f;
+            for (int b = 0; b <= GLFW_GAMEPAD_BUTTON_LAST; ++b) any |= pad.buttons[b] == GLFW_PRESS;
+            if (any) usingPad = true;
+        }
+        for (int k : {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_E, GLFW_KEY_SPACE})
+            if (glfwGetKey(win, k) == GLFW_PRESS) usingPad = false;
+        scene.promptStyle = usingPad && padOn ? padStyle : 0;
+        if (const char* ps = getenv("GA_PADICON")) scene.promptStyle = std::atoi(ps); // depuração
+        // botões do controle -> teclas do jogo
+        auto padKey = [&](int k) {
+            switch (k) {
+            case GLFW_KEY_SPACE: return padBtn(GLFW_GAMEPAD_BUTTON_A);          // A / X: pular
+            case GLFW_KEY_E: return padBtn(GLFW_GAMEPAD_BUTTON_X);              // X / quadrado: pegar
+            case GLFW_KEY_Q: return padBtn(GLFW_GAMEPAD_BUTTON_B);              // B / bola: cobertura
+            case GLFW_KEY_G: return padBtn(GLFW_GAMEPAD_BUTTON_DPAD_DOWN);      // soltar a arma
+            case GLFW_KEY_1: return padBtn(GLFW_GAMEPAD_BUTTON_DPAD_LEFT);      // pistola
+            case GLFW_KEY_2: return padBtn(GLFW_GAMEPAD_BUTTON_DPAD_UP);        // fuzil 1
+            case GLFW_KEY_3: return padBtn(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT);     // fuzil 2
+            case GLFW_KEY_LEFT_SHIFT: return padBtn(GLFW_GAMEPAD_BUTTON_LEFT_THUMB); // L3: correr
+            case GLFW_KEY_ENTER: return padBtn(GLFW_GAMEPAD_BUTTON_BACK);       // View / Share: pular a cena
+            default: return false;
+            }
+        };
+        bool esc = glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS || padBtn(GLFW_GAMEPAD_BUTTON_START);
         auto setMenu = [&](bool open) {
             menuOpen = open;
             mouseCaptured = !open;
@@ -1154,8 +1200,10 @@ int main(int argc, char** argv) {
             gfx.timeOfDay += dt * gfx.dayCycleSpeed / 60.0f;
             if (gfx.timeOfDay > 19.0f) gfx.timeOfDay = 5.5f;
         }
-        bool lmb = !menuOpen && glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-        bool rmb = mouseCaptured && glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        // gatilhos: RT/R2 atira, LT/L2 mira
+        const bool rt = padOn && pad.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] > 0.3f, lt = padOn && pad.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] > 0.3f;
+        bool lmb = !menuOpen && (glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS || rt);
+        bool rmb = !menuOpen && ((mouseCaptured && glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) || lt);
         bool lmbPressed = lmb && !lmbWas;
         lmbWas = lmb;
         if (!mouseCaptured && !menuOpen && lmbPressed) {
@@ -1170,6 +1218,11 @@ int main(int argc, char** argv) {
             float sens = 0.0025f + (0.0014f - 0.0025f) * cam.aimBlend;
             cam.yaw -= (float)(mx - lastMx) * sens;
             cam.pitch = std::clamp(cam.pitch + (float)(my - lastMy) * sens, -0.9f, 1.2f);
+        }
+        if (padOn && !menuOpen) { // analógico direito gira a câmera (mais devagar mirando)
+            const float rate = (2.8f - 1.4f * cam.aimBlend) * realDt;
+            cam.yaw -= padAxis(GLFW_GAMEPAD_AXIS_RIGHT_X) * rate;
+            cam.pitch = std::clamp(cam.pitch + padAxis(GLFW_GAMEPAD_AXIS_RIGHT_Y) * rate * 0.75f, -0.9f, 1.2f);
         }
         const double prevMx = lastMx, prevMy = lastMy;
         lastMx = mx;
@@ -1190,7 +1243,9 @@ int main(int argc, char** argv) {
         if (!menuOpen) cam.targetDist = std::clamp(cam.targetDist - g_scroll * 0.4f, 1.6f, 9.0f);
         g_scroll = 0.0f;
 
-        auto key = [&](int k) { return !menuOpen && playerAlive && !cine.active() && glfwGetKey(win, k) == GLFW_PRESS ? 1.0f : 0.0f; };
+        auto key = [&](int k) {
+            return !menuOpen && playerAlive && !cine.active() && (glfwGetKey(win, k) == GLFW_PRESS || padKey(k)) ? 1.0f : 0.0f;
+        };
         bool f1 = key(GLFW_KEY_F1) > 0;
         if (f1 && !f1Was) debugWeights = !debugWeights;
         f1Was = f1;
@@ -1285,6 +1340,10 @@ int main(int argc, char** argv) {
         glm::vec3 camF(std::sin(cam.yaw), 0.0f, std::cos(cam.yaw));
         glm::vec3 camR(-std::cos(cam.yaw), 0.0f, std::sin(cam.yaw));
         glm::vec3 move = camF * (key(GLFW_KEY_W) - key(GLFW_KEY_S)) + camR * (key(GLFW_KEY_D) - key(GLFW_KEY_A));
+        if (padOn && !menuOpen && playerAlive && !cine.active()) { // analógico esquerdo: anda (inclinar pouco = devagar)
+            move += camF * -padAxis(GLFW_GAMEPAD_AXIS_LEFT_Y) + camR * padAxis(GLFW_GAMEPAD_AXIS_LEFT_X);
+            if (glm::length(move) > 1.0f) move = glm::normalize(move);
+        }
         if (glm::length(move) > 1e-3f) move = glm::normalize(move);
         else move = glm::vec3(0.0f);
         // velocidades iguais às da captura -> passada sem deslizar; mirando só anda
@@ -1979,7 +2038,7 @@ int main(int argc, char** argv) {
                     scene.props.push_back({can, cine.canModel() * glm::scale(glm::mat4(1.0f), glm::vec3(0.0056f))});
             if (cine.active()) {
                 static bool enterWas = false;
-                const bool enter = glfwGetKey(win, GLFW_KEY_ENTER) == GLFW_PRESS;
+                const bool enter = glfwGetKey(win, GLFW_KEY_ENTER) == GLFW_PRESS || padKey(GLFW_KEY_ENTER) || padBtn(GLFW_GAMEPAD_BUTTON_A);
                 if (enter && !enterWas) cine.skip(); // Enter pula
                 enterWas = enter;
                 if (!menuOpen) cine.update(getenv("GA_CINE_T") ? 0.0f : realDt);
@@ -2131,6 +2190,7 @@ int main(int argc, char** argv) {
                 hud.dead = !playerAlive;
                 hud.coverHint = coverHint;
                 hud.inCover = coverOn;
+                hud.padStyle = scene.promptStyle;
                 hud.nextWave = hud.alive == 0 ? std::max(0.0f, 8.0f - waveT) : -1.0f;
                 menu::drawCombatHud(hud);
             }

@@ -81,6 +81,7 @@ struct RenderScene {
     // HUD
     float crosshairAlpha = 0.0f;
     float promptAlpha = 0.0f;
+    int promptStyle = 0; // ícone de "pegar": 0 tecla E, 1 botão X (Xbox), 2 quadrado (PlayStation)
     glm::vec3 promptWorld{0.0f}; // onde a tecla "E" aparece
 };
 

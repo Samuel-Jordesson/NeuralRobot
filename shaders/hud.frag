@@ -1,5 +1,5 @@
 #version 330 core
-// HUD: 0 = mira de um ponto, 1 = tecla "E".
+// HUD: 0 = mira de um ponto, 1 = tecla "E", 2 = botão X do Xbox (azul), 3 = quadrado do PlayStation (rosa).
 in vec2 vUV;
 out vec4 FragColor;
 uniform vec4 uRect;
@@ -18,6 +18,29 @@ void main() {
         float dotA = 1.0 - smoothstep(1.8, 2.8, r);
         float outline = 1.0 - smoothstep(2.8, 4.0, r);
         FragColor = vec4(vec3(dotA), max(dotA, outline * 0.55) * uAlpha);
+        return;
+    }
+    if (uType >= 2) { // botão redondo do controle
+        float R = uRect.w * 0.5 - 1.5;
+        float d = length(p) - R;
+        float fill = 1.0 - smoothstep(-0.5, 0.5, d);
+        float ring = (1.0 - smoothstep(0.8, 1.8, abs(d + 1.8))) * fill;
+        float s = uRect.w / 40.0;
+        vec2 q = p / s;
+        float g;
+        vec3 sym;
+        if (uType == 2) { // X: duas barras cruzadas
+            vec2 a = vec2(q.x + q.y, q.x - q.y) * 0.7071;
+            g = min(sdBox(a, vec2(9.5, 1.9)), sdBox(a, vec2(1.9, 9.5)));
+            sym = vec3(0.30, 0.55, 1.0);
+        } else { // quadrado vazado
+            g = abs(sdBox(q, vec2(6.6))) - 1.7;
+            sym = vec3(1.0, 0.45, 0.78);
+        }
+        float glyph = 1.0 - smoothstep(-0.6, 0.6, g * s);
+        vec3 col = mix(vec3(0.07), vec3(0.85), ring);
+        col = mix(col, sym, glyph);
+        FragColor = vec4(col, max(fill * 0.7, max(ring, glyph)) * uAlpha);
         return;
     }
     vec2 h = uRect.zw * 0.5 - 1.5;
