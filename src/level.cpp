@@ -10,10 +10,11 @@
 #include <map>
 #include <sstream>
 
-const char* sceneName(int id) { return id == SceneOfficial ? "Oficial" : "Teste (arena)"; }
-const char* sceneFile(int id) { return id == SceneOfficial ? "levels/oficial.txt" : "levels/teste.txt"; }
-std::string scenePaintFile(int id) { return id == SceneOfficial ? "levels/oficial_pintura.png" : "levels/teste_pintura.png"; }
-std::string sceneTerrainFile(int id) { return id == SceneOfficial ? "levels/oficial_relevo.bin" : "levels/teste_relevo.bin"; }
+const char* sceneName(int id) { return id == SceneOfficial ? "Oficial" : id == SceneCasa ? "Casa velha" : "Teste (arena)"; }
+static const char* sceneBase(int id) { return id == SceneOfficial ? "levels/oficial" : id == SceneCasa ? "levels/casa_velha" : "levels/teste"; }
+const char* sceneFile(int id) { return id == SceneOfficial ? "levels/oficial.txt" : id == SceneCasa ? "levels/casa_velha.txt" : "levels/teste.txt"; }
+std::string scenePaintFile(int id) { return std::string(sceneBase(id)) + "_pintura.png"; }
+std::string sceneTerrainFile(int id) { return std::string(sceneBase(id)) + "_relevo.bin"; }
 
 void addMeshColliders(World& w, const std::vector<glm::vec3>& tris, const glm::mat4& model, float cell, float band0,
                       float band1) {

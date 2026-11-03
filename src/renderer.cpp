@@ -608,7 +608,9 @@ void Renderer::setLightingUniforms(Shader& sh, const RenderScene& s) {
         const int kMax = 16;
         // mais de 16: ficam as mais perto da câmera
         std::vector<const RenderScene::Light*> ls;
-        for (const RenderScene::Light& l : s.lights) ls.push_back(&l);
+        // luzes locais longe da câmera não iluminam nada que apareça: ficam fora (menos conta por pixel)
+        for (const RenderScene::Light& l : s.lights)
+            if (l.type == 2 || l.type == 3 || glm::length(l.pos - s.camPos) - l.range < 25.0f) ls.push_back(&l);
         if ((int)ls.size() > kMax)
             std::partial_sort(ls.begin(), ls.begin() + kMax, ls.end(), [&](auto* a, auto* b) {
                 return glm::length(a->pos - s.camPos) - a->range < glm::length(b->pos - s.camPos) - b->range;
@@ -886,7 +888,13 @@ void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
 void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4& model, const glm::mat4* bones,
                            bool material) {
     sh.set("uModel", model);
-    sh.setMat4Array("uBones", bones, BONE_COUNT);
+    // objetos parados usam sempre os ossos identidade: só envia quando o shader estava com outros
+    if (bones != identityBones_) {
+        sh.setMat4Array("uBones", bones, BONE_COUNT);
+        identityLoaded_.erase(&sh);
+    } else if (identityLoaded_.insert(&sh).second) {
+        sh.setMat4Array("uBones", bones, BONE_COUNT);
+    }
     // modelos divididos em blocos (mapa): só o que cabe na visão deste passo
     const glm::mat4 mvp = cullVP_ * model;
     const glm::mat4* cull = m.chunks.empty() ? nullptr : &mvp;
@@ -925,7 +933,7 @@ void Renderer::drawSkinned(Shader& sh, const CharacterModel& m, const glm::mat4&
         glBindTexture(GL_TEXTURE_2D, mat.texEmissive);
         sh.set("uEmissive", mat.emissiveFactor);
         sh.set("uUseAO", mat.useOcclusion ? 1 : 0);
-        sh.set("uAlphaCut", mat.alphaCut ? 1 : 0);
+        sh.set("uAlphaCut", mat.alphaCut && !noAlphaCut_ ? 1 : 0);
         m.drawPart(i, cull);
     }
 }
@@ -985,11 +993,63 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         skinSh.set("uDebug", s.debugWeights ? 1 : 0);
     }
     if (color) skinSh.set("uDebug", 0);
-    for (const RenderScene::Prop& p : s.props) {
-        if (!p.mesh) continue;
+    // corte dos objetos: fora da visão desta passada (câmera ou cascata de sombra), pequenos longe
+    // da câmera e miudezas na sombra não são desenhados
+    auto visible = [&](const RenderScene::Prop& p) {
+        const glm::vec3 lo = p.mesh->boundsMin, hi = p.mesh->boundsMax;
+        const glm::vec3 c = glm::vec3(p.model * glm::vec4((lo + hi) * 0.5f, 1.0f));
+        const float r = glm::length(glm::vec3(p.model * glm::vec4(hi - lo, 0.0f))) * 0.5f;
+        if (pass == Pass::Shadow) { // miudezas só na cascata de perto; objetos médios não fazem sombra longe
+            if (r < 0.3f || (shadowCascade_ > 0 && r < 1.2f)) return false;
+            if (r < 2.5f && glm::length(c - s.camPos) - r > 35.0f) return false;
+        }
+        const float d = glm::length(c - s.camPos);
+        if (d - r > std::max(18.0f, r * 90.0f)) return false; // pequeno e longe: some
+        int out[6] = {0, 0, 0, 0, 0, 0};
+        for (int k = 0; k < 8; ++k) {
+            glm::vec3 q((k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z);
+            glm::vec4 h = vp * p.model * glm::vec4(q, 1.0f);
+            out[0] += h.x < -h.w; out[1] += h.x > h.w; out[2] += h.y < -h.w;
+            out[3] += h.y > h.w; out[4] += pass != Pass::Shadow && h.z < -h.w; out[5] += h.z > h.w;
+        }
+        for (int k = 0; k < 6; ++k)
+            if (out[k] == 8) return false;
+        return true;
+    };
+    // do mais perto para o mais longe: a placa descarta cedo o que fica escondido atrás (menos pixels sombreados)
+    propOrder_.clear();
+    for (size_t i = 0; i < s.props.size(); ++i)
+        if (s.props[i].mesh && visible(s.props[i])) {
+            const RenderScene::Prop& p = s.props[i];
+            glm::vec3 c = glm::vec3(p.model * glm::vec4((p.mesh->boundsMin + p.mesh->boundsMax) * 0.5f, 1.0f));
+            propOrder_.push_back({glm::length(c - s.camPos), (int)i});
+        }
+    if (pass != Pass::Shadow) std::sort(propOrder_.begin(), propOrder_.end());
+    // folhagem (recorte por alpha) no passo de cor: primeiro só a profundidade, depois a cor onde ela
+    // bate, sem descarte -> cada pixel de folha passa pelo sombreamento caro uma vez só
+    foliage_.clear();
+    for (const auto& [dist, idx] : propOrder_) {
+        const RenderScene::Prop& p = s.props[idx];
+        if (color && p.mesh->hasAlphaCut) { foliage_.push_back(idx); continue; }
         // pintura do chão só no chão: modelos postos (casa, móveis) e folhagem ficam com a textura deles
         if (painted) skinSh.set("uPaintOn", p.groundPaint && !p.mesh->hasAlphaCut ? 1 : 0);
         drawSkinned(skinSh, *p.mesh, p.model, identityBones_, color);
+    }
+    if (color && !foliage_.empty()) {
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        skinnedDepth_.use();
+        skinnedDepth_.set("uViewProj", vp);
+        for (int idx : foliage_) drawSkinned(skinnedDepth_, *s.props[idx].mesh, s.props[idx].model, identityBones_, false);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        skinSh.use();
+        if (painted) skinSh.set("uPaintOn", 0);
+        noAlphaCut_ = true;
+        for (int idx : foliage_) drawSkinned(skinSh, *s.props[idx].mesh, s.props[idx].model, identityBones_, true);
+        noAlphaCut_ = false;
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
     }
     if (color) skinSh.set("uPaintOn", 0); // personagens e armas não recebem a pintura do chão
     // tecidos: malha já no mundo, desenhada com o material dos modelos (dupla face)
@@ -1160,8 +1220,10 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     for (int i = 0; i < shadowLayers_; ++i) {
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowRaw_, 0, i);
         glClear(GL_DEPTH_BUFFER_BIT);
+        shadowCascade_ = i;
         drawScene(worldDepth_, skinnedDepth_, s, Pass::Shadow, cascadeVP_[i]);
     }
+    shadowCascade_ = -1;
     glDisable(GL_POLYGON_OFFSET_FILL);
     // engorda as sombras 1 texel (fecha frestas por onde a luz vazava em lugares fechados)
     glBindFramebuffer(GL_FRAMEBUFFER, shadowMinFbo_);

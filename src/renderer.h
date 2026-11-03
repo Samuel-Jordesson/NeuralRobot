@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 #include "character_model.h"
 #include "gl_util.h"
 #include "graphics_settings.h"
@@ -145,6 +146,11 @@ private:
     GLuint noiseTex_ = 0;
     GLuint fxVao_ = 0, fxVbo_ = 0;
     glm::mat4 identityBones_[BONE_COUNT];
+    int shadowCascade_ = -1;
+    std::vector<std::pair<float, int>> propOrder_;
+    std::vector<int> foliage_;   // objetos com recorte por alpha (desenhados por último no passo de cor)
+    bool noAlphaCut_ = false;    // segunda passada da folhagem: a profundidade já recortou // objetos visíveis no passo, por distância // cascata sendo desenhada no passo de sombra
+    std::unordered_set<const Shader*> identityLoaded_; // shaders que já estão com os ossos na identidade
 
     // sombras em cascata
     static constexpr int kMaxCascades = 4;
