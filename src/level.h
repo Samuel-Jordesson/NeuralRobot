@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-// Cenários do jogo: 0 = teste (mapa de blocos + arena), 1 = oficial (o do jogo final).
-enum SceneId { SceneTest = 0, SceneOfficial = 1, SceneCount };
+// Cenários do jogo: 0 = teste (mapa de blocos + arena), 1 = oficial (o do jogo final), 2 = casa velha (posto abandonado).
+enum SceneId { SceneTest = 0, SceneOfficial = 1, SceneCasa = 2, SceneCount };
 const char* sceneName(int id);
 const char* sceneFile(int id); // levels/<nome>.txt (salvo pelo editor livre)
 std::string scenePaintFile(int id);   // levels/<nome>_pintura.png

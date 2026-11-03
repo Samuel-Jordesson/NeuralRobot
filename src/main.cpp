@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
 #if GA_EDITOR
     const int startScene = std::clamp(args.scene >= 0 ? args.scene : gfx.scene, 0, SceneCount - 1);
 #else
-    const int startScene = SceneOfficial;
+    const int startScene = SceneCasa; // jogo final: casa velha + depósito de containers
 #endif
     World world;
     Arena arena;              // área de combate: porta, inimigos (no teste é a arena murada)
@@ -458,7 +458,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < SceneCount; ++i)
         if (layouts[i].load(root + "/" + sceneFile(i))) std::printf("[cenario] layout carregado de %s\n", sceneFile(i));
 #else
-    layouts[SceneOfficial].parse(kBakedOfficialLevel);
+    layouts[SceneCasa].parse(kBakedOfficialLevel);
 #endif
 
     // Monta um cenário: mundo (colisões), objetos, área de combate, armas e o jogador no começo.

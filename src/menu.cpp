@@ -429,7 +429,7 @@ Action drawPauseMenu(GraphicsSettings& gs, bool& changed) {
         const char* names[SceneCount];
         for (int i = 0; i < SceneCount; ++i) names[i] = sceneName(i);
         int sc = gs.scene;
-        if (combo("Cenário", "##scene", &sc, names, SceneCount, "Troca na hora; a versão compilada usa sempre o oficial")) {
+        if (combo("Cenário", "##scene", &sc, names, SceneCount, "Troca na hora; a versão compilada usa sempre a Casa velha")) {
             gs.scene = sc;
             action = Action::ChangeScene;
         }

@@ -1,0 +1,641 @@
+# Cenario (editor livre). Angulos em graus.
+# Casa velha: posto de saude abandonado (gerado; editavel no editor livre)
+prop casa_velha_1 0 0 0 0 1 assets/casa_velha/casa_velha.glb
+prop steel_frame_shelves_02_1 -9.55 0.15 2.42 0 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop steel_frame_shelves_02_2 -8.9 0.15 2.42 0 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop SchoolChair_01_1 -7 0.15 3 10 1 assets/casa_velha/SchoolChair_01.glb
+prop television_02_1 -7.4 1.1 3.72 180 1 assets/casa_velha/television_02.glb
+prop office_notepads_1 -6.1 1.1 3.7 0 0.55 assets/casa_velha/office_notepads.glb
+prop clipboard_1 -5.75 1.1 3.72 25 1 assets/casa_velha/clipboard.glb
+prop binder_notebook_1 -8.25 1.1 3.7 -10 1 assets/casa_velha/binder_notebook.glb
+prop plastic_monobloc_chair_01_1 -9.55 0.15 5.95 90 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop plastic_monobloc_chair_01_2 -9.55 0.15 6.65 95 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop plastic_monobloc_chair_01_3 -9.5 0.15 7.35 80 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop plastic_monobloc_chair_01_4 -2.55 0.15 6.9 -90 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop plastic_monobloc_chair_01_5 -4.3 0.15 5.2 150 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop WetFloorSign_01_1 -5.8 0.15 6.2 30 1 assets/casa_velha/WetFloorSign_01.glb
+prop potted_plant_01_1 -9.45 0.15 7.5 0 1 assets/casa_velha/potted_plant_01.glb
+prop potted_plant_02_1 -2.55 0.15 7.5 0 1 assets/casa_velha/potted_plant_02.glb
+prop korean_fire_extinguisher_01_1 -2.3 0.15 2.5 -90 1 assets/casa_velha/korean_fire_extinguisher_01.glb
+prop trashbag_1 -4.6 0.15 7.35 20 1 assets/casa_velha/trashbag.glb
+prop cardboard_box_01_1 -5 0.15 2.5 15 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_2 -5 0.49 2.52 40 1 assets/casa_velha/cardboard_box_01.glb
+prop wall_clock_1 -5.4 2.25 2.13 0 1 assets/casa_velha/wall_clock.glb
+prop hanging_picture_frame_01_1 -9.88 1.45 6.6 90 1 assets/casa_velha/hanging_picture_frame_01.glb
+prop fire_alarm_1 -3.2 1.5 2.12 0 1 assets/casa_velha/fire_alarm.glb
+prop ceiling_fan_1 -4 2.48 5.6 0 1 assets/casa_velha/ceiling_fan.glb
+prop mounted_fluorescent_lights_1 -6.6 2.955 3.2 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop mounted_fluorescent_lights_2 -6.6 2.955 6.4 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop can_rusted_1 -3.1 0.15 4.6 0 1 assets/casa_velha/can_rusted.glb
+prop plastic_monobloc_chair_01_6 -5.4 0.15 0.45 0 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop plastic_monobloc_chair_01_7 -4.75 0.15 0.45 -8 1 assets/casa_velha/plastic_monobloc_chair_01.glb
+prop SchoolChair_01_2 -0.6 0.15 0.5 5 1 assets/casa_velha/SchoolChair_01.glb
+prop drawer_cabinet_1 0.9 0.15 0.36 0 1 assets/casa_velha/drawer_cabinet.glb
+prop medical_box_1 0.9 2.03 0.36 12 1 assets/casa_velha/medical_box.glb
+prop steel_frame_shelves_02_3 4.6 0.15 0.36 0 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop cardboard_box_01_3 3.8 0.15 0.42 5 1 assets/casa_velha/cardboard_box_01.glb
+prop wheelchair_01_1 5.5 0.15 1.3 120 1 assets/casa_velha/wheelchair_01.glb
+prop can_rusted_2 -1 0.15 1.6 0 1 assets/casa_velha/can_rusted.glb
+prop plastic_bottle_gallon_1 3.9 0.15 1.72 0 1 assets/casa_velha/plastic_bottle_gallon.glb
+prop dustpan_1 -3 0.15 1.7 40 1 assets/casa_velha/dustpan.glb
+prop plastic_broom_1 -5.75 0.15 1.55 90 1 assets/casa_velha/plastic_broom.glb
+prop korean_fire_extinguisher_01_2 7.75 0.15 1.75 -90 1 assets/casa_velha/korean_fire_extinguisher_01.glb
+prop fire_alarm_2 7.89 1.5 0.2 -90 1 assets/casa_velha/fire_alarm.glb
+prop mounted_fluorescent_lights_3 -4 2.955 1 90 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop mounted_fluorescent_lights_4 0 2.955 1 90 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop mounted_fluorescent_lights_5 4 2.955 1 90 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop mounted_fluorescent_lights_6 7 2.955 1 90 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop old_bed_frame_1 -5.2 0.15 -2.9 0 1 assets/casa_velha/old_bed_frame.glb
+prop old_bed_frame_2 -1 0.15 -2.9 0 1 assets/casa_velha/old_bed_frame.glb
+prop painted_wooden_cabinet_02_1 -5.5 0.15 -0.8 90 1 assets/casa_velha/painted_wooden_cabinet_02.glb
+prop metal_office_desk_1 -3.75 0.15 -3.4 180 1 assets/casa_velha/metal_office_desk.glb
+prop television_02_2 -3.4 0.94 -3.55 0 1 assets/casa_velha/television_02.glb
+prop bleach_bottle_1 -4.4 0.94 -3.6 0 1 assets/casa_velha/bleach_bottle.glb
+prop SchoolChair_01_3 -3.6 0.15 -2.45 175 1 assets/casa_velha/SchoolChair_01.glb
+prop trashbag_2 -0.6 0.15 -0.6 0 1 assets/casa_velha/trashbag.glb
+prop cardboard_box_01_4 -4.4 0.15 -0.55 20 1 assets/casa_velha/cardboard_box_01.glb
+prop vintage_crutches_01_1 -0.3 0.15 -1.3 -90 1 assets/casa_velha/vintage_crutches_01.glb
+prop mounted_fluorescent_lights_7 -3 2.955 -2 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop old_bed_frame_3 1 0.15 -2.2 0 1 assets/casa_velha/old_bed_frame.glb
+prop vintage_cabinet_01_1 5 0.15 -1.6 -90 1 assets/casa_velha/vintage_cabinet_01.glb
+prop worn_metal_rack_1 0.6 0.15 -0.45 0 1 assets/casa_velha/worn_metal_rack.glb
+prop medical_box_2 0.6 2.05 -0.45 -6 1 assets/casa_velha/medical_box.glb
+prop plastic_bottle_gallon_2 4.1 0.15 -3.7 0 1 assets/casa_velha/plastic_bottle_gallon.glb
+prop bleach_bottle_2 5.1 0.92 -3.55 0 1 assets/casa_velha/bleach_bottle.glb
+prop SchoolChair_01_4 3.4 0.15 -2.8 30 1 assets/casa_velha/SchoolChair_01.glb
+prop mounted_fluorescent_lights_8 2.7 2.955 -2 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop steel_frame_shelves_02_4 7.6 0.15 -3.3 -90 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop steel_frame_shelves_02_5 7.6 0.15 -2.65 -90 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop steel_frame_shelves_02_6 7.6 0.15 -2 -90 1 assets/casa_velha/steel_frame_shelves_02.glb
+prop cardboard_box_01_5 5.95 0.15 -3.6 0 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_6 5.95 0.49 -3.6 25 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_7 6 0.15 -3 -10 1 assets/casa_velha/cardboard_box_01.glb
+prop plastic_crate_01_1 6 0.15 -2.3 0 1 assets/casa_velha/plastic_crate_01.glb
+prop cement_bag_1 6.75 0.15 -3.55 90 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_2 6.75 0.33 -3.55 82 1 assets/casa_velha/cement_bag.glb
+prop metal_jerrycan_1 6.1 0.15 -1 30 1 assets/casa_velha/metal_jerrycan.glb
+prop mounted_fluorescent_lights_9 6.7 2.955 -2 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop rollershutter_door_1 9.7 1.9 3.85 0 1 assets/casa_velha/rollershutter_door.glb
+stretch rollershutter_door_1 1.3 0.46 1
+prop covered_car_1 10.6 0.06 -0.6 0 1 assets/casa_velha/covered_car.glb
+prop old_tyre_1 12.9 0.06 -3.5 0 1 assets/casa_velha/old_tyre.glb
+prop old_tyre_2 12.9 0.22 -3.5 20 1 assets/casa_velha/old_tyre.glb
+prop ladder_sectioned_01_1 8.8 0.06 -3.78 0 1 assets/casa_velha/ladder_sectioned_01.glb
+prop hand_truck_1 13.2 0.06 1.5 -60 1 assets/casa_velha/hand_truck.glb
+prop barrel_03_1 13.4 0.06 3.2 0 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_2 12.75 0.06 3.3 40 1 assets/casa_velha/barrel_03.glb
+prop propane_tank_1 8.6 0.06 3.4 0 1 assets/casa_velha/propane_tank.glb
+prop wooden_military_crate_1 12.6 0.06 -2 90 1 assets/casa_velha/wooden_military_crate.glb
+prop worn_metal_rack_2 8.45 0.06 -1.5 90 1 assets/casa_velha/worn_metal_rack.glb
+prop rusted_spade_01_1 13.85 0.06 -1 -90 1 assets/casa_velha/rusted_spade_01.glb
+prop mounted_fluorescent_lights_10 11 3.555 0 0 1 assets/casa_velha/mounted_fluorescent_lights.glb
+prop cement_bag_3 -4.6 0.15 8.55 87.1813 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_4 -4.6 0.33 8.55 84.4136 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_5 -4.6 0.51 8.55 92.415 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_6 -3.95 0.15 8.55 83.159 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_7 -3.95 0.33 8.55 90.5741 1 assets/casa_velha/cement_bag.glb
+prop wooden_crate_01_1 -3.2 0.15 8.45 0 1 assets/casa_velha/wooden_crate_01.glb
+prop plastic_crate_01_2 -3.5 0.15 9.05 20 1 assets/casa_velha/plastic_crate_01.glb
+prop WetFloorSign_01_2 -2.6 0.15 9.1 -20 1 assets/casa_velha/WetFloorSign_01.glb
+prop potted_plant_02_2 -9.7 0.15 8.6 0 1 assets/casa_velha/potted_plant_02.glb
+prop barrel_03_3 -2.25 0.15 8.5 0 1 assets/casa_velha/barrel_03.glb
+prop exterior_aircon_unit_1 -8.9 1.6 8.3 0 1 assets/casa_velha/exterior_aircon_unit.glb
+prop exterior_aircon_unit_2 0.4 1.5 2.3 0 1 assets/casa_velha/exterior_aircon_unit.glb
+prop security_light_1 8.5 2.75 4.25 0 1 assets/casa_velha/security_light.glb
+prop power_box_01_1 13.4 1.4 4.15 0 1 assets/casa_velha/power_box_01.glb
+prop utility_box_01_1 14.35 0 2.5 90 1 assets/casa_velha/utility_box_01.glb
+prop rua_bloquete_1 0 0 0 0 1 assets/casa_velha/rua_bloquete.glb
+light 1 28.7 7.4 24 0 -90 1 0.8 0.55 9 12 30 55 0 0
+light 1 28.7 7.4 39 0 -90 1 0.8 0.55 9 12 30 55 0 0
+light 1 28.7 7.4 54 0 -90 1 0.8 0.55 9 12 30 55 0 0
+light 1 28.7 7.4 69 0 -90 1 0.8 0.55 9 12 30 55 0 0
+prop coqueiro_a_1 36.6125 0 21.8009 25.148 8.18143 assets/casa_velha/coqueiro_a.glb
+prop arvore_1 40.8714 0 21.1697 225.876 1.57908 assets/arvore.glb
+prop arvore_2 47.4288 0 20.6397 309.049 1.31584 assets/arvore.glb
+prop coqueiro_b_1 50.6808 0 22.546 37.1001 9.14241 assets/casa_velha/coqueiro_b.glb
+prop arvore_3 38.1931 0 26.42 178.709 1.41269 assets/arvore.glb
+prop arvore_4 43.2703 0 25.6478 89.4336 1.27191 assets/arvore.glb
+prop coqueiro_b_2 46.0756 0 27.1884 262.6 8.57588 assets/casa_velha/coqueiro_b.glb
+prop arvore_5 36.956 0 29.9952 14.1146 1.46729 assets/arvore.glb
+prop arvore_6 43.1264 0 29.4696 250.306 1.43775 assets/arvore.glb
+prop arvore_7 47.0199 0 31.3624 170.675 1.46566 assets/arvore.glb
+prop arvore_8 50.9414 0 31.5076 295.893 1.31384 assets/arvore.glb
+prop coqueiro_b_3 37.5664 0 34.7012 177.729 8.43642 assets/casa_velha/coqueiro_b.glb
+prop arvore_9 41.6937 0 35.6189 178.742 1.26655 assets/arvore.glb
+prop arvore_10 44.9108 0 34.16 198.079 1.48256 assets/arvore.glb
+prop arvore_11 36.749 0 38.0781 237.066 1.20483 assets/arvore.glb
+prop arvore_12 41.3458 0 38.0613 192.453 1.44392 assets/arvore.glb
+prop coqueiro_a_2 45.8699 0 40.2372 342.679 9.36115 assets/casa_velha/coqueiro_a.glb
+prop arvore_13 50.1824 0 39.0688 144.159 1.27624 assets/arvore.glb
+prop coqueiro_a_3 36.8071 0 44.5031 193.183 9.8979 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_a_4 42.3422 0 43.2484 90.8128 8.69478 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_4 47.4793 0 44.2007 174.18 8.17177 assets/casa_velha/coqueiro_b.glb
+prop arvore_14 49.7943 0 45.2893 58.1179 1.20924 assets/arvore.glb
+prop coqueiro_a_5 38.7744 0 48.8284 231.45 8.18202 assets/casa_velha/coqueiro_a.glb
+prop arvore_15 43.2248 0 49.0012 80.2054 1.41663 assets/arvore.glb
+prop arvore_16 46.3397 0 50.2993 272.996 1.27806 assets/arvore.glb
+prop arvore_17 51.41 0 48.5339 177.401 1.4924 assets/arvore.glb
+prop arvore_18 37.0809 0 54.935 123.941 1.52343 assets/arvore.glb
+prop arvore_19 43.4235 0 53.3612 36.7766 1.38803 assets/arvore.glb
+prop arvore_20 47.4557 0 54.9504 0.686993 1.56368 assets/arvore.glb
+prop arvore_21 51.5039 0 53.4793 139.873 1.4846 assets/arvore.glb
+prop arvore_22 40.7602 0 60.0371 259.857 1.38526 assets/arvore.glb
+prop coqueiro_a_6 45.01 0 57.5798 54.4143 9.8097 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_5 50.9718 0 58.2499 197.518 8.26197 assets/casa_velha/coqueiro_b.glb
+prop arvore_23 43.3009 0 62.32 313.827 1.53046 assets/arvore.glb
+prop arvore_24 45.3789 0 61.7402 211.117 1.30375 assets/arvore.glb
+prop coqueiro_b_6 51.6931 0 63.006 293.417 9.03352 assets/casa_velha/coqueiro_b.glb
+prop arvore_25 42.0316 0 68.595 279.542 1.44342 assets/arvore.glb
+prop coqueiro_a_7 45.9205 0 68.1522 200.331 8.65196 assets/casa_velha/coqueiro_a.glb
+prop arvore_26 51.3528 0 66.2949 201.707 1.2994 assets/arvore.glb
+prop arvore_27 38.1852 0 72.4442 328.496 1.3773 assets/arvore.glb
+prop arvore_28 42.0365 0 72.2425 162.844 1.41331 assets/arvore.glb
+prop arvore_29 46.5977 0 72.7939 339.185 1.30384 assets/arvore.glb
+prop arvore_30 51.52 0 70.5757 43.7839 1.37685 assets/arvore.glb
+prop coqueiro_b_7 38.8518 0 76.7569 55.6008 9.43224 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_8 43.4026 0 74.7246 342.901 8.79651 assets/casa_velha/coqueiro_a.glb
+prop arvore_31 46.9973 0 74.5502 155.348 1.40624 assets/arvore.glb
+prop arvore_32 49.9556 0 76.2323 7.01385 1.42162 assets/arvore.glb
+prop arvore_33 38.3718 0 80.0193 23.1447 1.59403 assets/arvore.glb
+prop arvore_34 40.8143 0 79.2792 14.2517 1.5116 assets/arvore.glb
+prop coqueiro_b_8 47.0488 0 80.5104 340.561 8.8119 assets/casa_velha/coqueiro_b.glb
+prop arvore_35 50.4838 0 79.4636 100.462 1.51984 assets/arvore.glb
+prop grass_bermuda_01_1 38.1963 0 70.8993 30.1473 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop weed_plant_02_1 38.0831 0 22.7043 357.95 0.867104 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_1 38.2547 0 65.2817 337.725 1.08769 assets/casa_velha/grass_medium_02.glb
+prop fern_02_1 25.2529 0 54.3962 74.1138 0.878275 assets/casa_velha/fern_02.glb
+prop fern_02_2 37.5493 0 24.2539 6.6362 0.902262 assets/casa_velha/fern_02.glb
+prop weed_plant_02_2 38.4363 0 28.4832 294.811 0.872871 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_2 26.8865 0 40.7748 77.4652 0.791826 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_3 36.176 0 82.3557 353.477 1.0348 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_4 26.3636 0 31.958 30.4146 1.03651 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_3 26.4764 0 36.775 105.501 0.883781 assets/casa_velha/grass_medium_02.glb
+prop fern_02_3 25.9146 0 80.669 350.144 0.918829 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_2 27.2142 0 43.7516 0.384809 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_3 36.7067 0 52.7889 1.78219 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_medium_02_4 25.0244 0 24.5417 8.09789 0.821698 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_5 36.2751 0 45.7605 117.409 1.09389 assets/casa_velha/grass_medium_02.glb
+prop grass_bermuda_01_4 36.0334 0 72.3163 257.404 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_medium_02_6 37.0876 0 67.9249 204.653 1.02516 assets/casa_velha/grass_medium_02.glb
+prop grass_bermuda_01_5 35.6466 0 23.9008 47.9136 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_medium_02_7 25.0623 0 25.0976 6.78264 0.912578 assets/casa_velha/grass_medium_02.glb
+prop grass_bermuda_01_6 25.4595 0 67.6442 181.07 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop weed_plant_02_5 37.1521 0 37.3838 26.802 0.806223 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_6 25.313 0 73.5774 27.6264 1.06419 assets/casa_velha/weed_plant_02.glb
+prop grass_bermuda_01_7 36.4332 0 58.582 119.438 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_8 37.4894 0 51.4277 174.887 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop weed_plant_02_7 38.4203 0 39.7422 185.953 0.885865 assets/casa_velha/weed_plant_02.glb
+prop fern_02_4 36.9524 0 81.6657 337.052 0.707002 assets/casa_velha/fern_02.glb
+prop fern_02_5 26.8497 0 45.5977 329.96 1.07221 assets/casa_velha/fern_02.glb
+prop fern_02_6 25.0258 0 30.0889 295.278 0.903498 assets/casa_velha/fern_02.glb
+prop weed_plant_02_8 38.1719 0 76.76 175.011 0.709934 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_9 26.0292 0 40.419 50.6546 0.837584 assets/casa_velha/weed_plant_02.glb
+prop fern_02_7 36.5166 0 67.7948 302.08 0.748017 assets/casa_velha/fern_02.glb
+prop fern_02_8 26.5826 0 44.7055 141.444 1.09952 assets/casa_velha/fern_02.glb
+prop fern_02_9 25.7018 0 74.1096 101.03 0.720647 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_9 37.5197 0 81.2334 157.047 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_10 26.733 0 71.5297 227.122 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_11 38.2489 0 25.018 263.647 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop weed_plant_02_10 26.6817 0 24.9876 333.64 0.750925 assets/casa_velha/weed_plant_02.glb
+prop fern_02_10 25.6592 0 67.081 351.467 0.804068 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_12 25.5521 0 32.2073 58.1965 2.8 assets/casa_velha/grass_bermuda_01.glb
+prop grass_medium_02_8 27.0649 0 35.4215 326.253 1.09859 assets/casa_velha/grass_medium_02.glb
+prop arvore_36 0.9 0 3 161.986 1 assets/arvore.glb
+prop arvore_37 5.6 0 3 50.2546 1.1 assets/arvore.glb
+prop arvore_38 -9 0 -9.5 69.2666 1.2 assets/arvore.glb
+prop arvore_39 -2 0 -10 32.6572 1.15 assets/arvore.glb
+prop arvore_40 6 0 -9.2 123.104 1.25 assets/arvore.glb
+prop arvore_41 13 0 -10.5 32.794 1.1 assets/arvore.glb
+prop arvore_42 -15.5 0 -4 86.0856 1.1 assets/arvore.glb
+prop arvore_43 -11.8 0 9.6 93.0087 1.05 assets/arvore.glb
+prop shrub_01_1 -0.5 0 3 0 1 assets/casa_velha/shrub_01.glb
+prop coqueiro_a_9 -14.8804 0 2.39945 148.601 8.03471 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_a_10 19.303 0 -0.258875 22.3414 7.69379 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_9 19.4014 0 8.00543 226.666 9.15715 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_11 -16.6518 0 9.63486 138.442 8.61448 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_10 -23.2737 0 11.5579 314.241 7.05453 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_12 29.8803 0 11.9219 289.53 9.4207 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_11 -32.7997 0 23.3264 333.658 9.06397 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_b_12 38.7556 0 22.5975 39.2566 7.38595 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_13 -16.7936 0 30.3548 233.045 8.912 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_13 26.336 0 30.443 0.491774 7.31413 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_14 14.2328 0 59.6861 46.0681 7.62948 assets/casa_velha/coqueiro_a.glb
+prop coqueiro_b_14 -2.68227 0 -9.62059 25.3267 8.31109 assets/casa_velha/coqueiro_b.glb
+prop coqueiro_a_15 43.8209 0 10.5577 216.382 7.02615 assets/casa_velha/coqueiro_a.glb
+prop shrub_03_1 3.3 0 3 0 1 assets/casa_velha/shrub_03.glb
+prop shrub_04_1 6.8 0 3 0 1 assets/casa_velha/shrub_04.glb
+prop fern_02_11 2.3 0 2.8 40 1 assets/casa_velha/fern_02.glb
+prop grass_medium_01_1 3 0 3.25 0 1 assets/casa_velha/grass_medium_01.glb
+stretch grass_medium_01_1 1.6 1 1
+prop shrub_02_1 -11.4 0 -5.4 0 1 assets/casa_velha/shrub_02.glb
+prop shrub_02_2 15 0 -5.4 160 1 assets/casa_velha/shrub_02.glb
+prop shrub_02_3 -12 0 3 80 0.7 assets/casa_velha/shrub_02.glb
+prop grass_medium_01_2 -3 0 -6.6 0 1 assets/casa_velha/grass_medium_01.glb
+prop grass_medium_01_3 8 0 -6.6 180 1 assets/casa_velha/grass_medium_01.glb
+prop grass_medium_01_4 -12.6 0 -1 90 1 assets/casa_velha/grass_medium_01.glb
+prop grass_medium_01_5 16.6 0 6 90 1 assets/casa_velha/grass_medium_01.glb
+prop metal_trash_can_1 15.6 0 9.4 -90 1 assets/casa_velha/metal_trash_can.glb
+prop trashbag_3 14.4 0 8.4 0 1 assets/casa_velha/trashbag.glb
+prop trashbag_4 14.9 0 7.8 70 1 assets/casa_velha/trashbag.glb
+prop old_tyre_3 12 0 6.2 30 1 assets/casa_velha/old_tyre.glb
+prop concrete_road_barrier_1 -11.4 0 11.7 0 1 assets/casa_velha/concrete_road_barrier.glb
+prop concrete_road_barrier_2 8 0 12 10 1 assets/casa_velha/concrete_road_barrier.glb
+prop dry_branches_medium_01_1 2 0 7.6 40 1 assets/casa_velha/dry_branches_medium_01.glb
+prop dry_branches_medium_01_2 -11 0 6 200 1 assets/casa_velha/dry_branches_medium_01.glb
+prop barrel_03_4 16.2 0 -2 0 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_5 16.25 0 -1.3 50 1 assets/casa_velha/barrel_03.glb
+prop wooden_military_crate_2 16 0 4.6 80 1 assets/casa_velha/wooden_military_crate.glb
+prop cement_bag_8 4 0 10 40 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_9 4.6 0 10.1 65 1 assets/casa_velha/cement_bag.glb
+prop cement_bag_10 4.3 0 10.6 90 1 assets/casa_velha/cement_bag.glb
+prop deposito_1 0 0 0 0 1 assets/casa_velha/deposito.glb
+prop container_40_azul_1 -10 0 33 0 1 assets/casa_velha/container_40_azul.glb
+prop container_40_vermelho_1 -10 2.59 35 2 1 assets/casa_velha/container_40_vermelho.glb
+prop container_20_vermelho_1 -6 0 32 -3 1 assets/casa_velha/container_20_vermelho.glb
+prop container_20_amarelo_1 -10.2 0 24.7 90 1 assets/casa_velha/container_20_amarelo.glb
+prop container_20_azul_1 -6.2 0 41 88 1 assets/casa_velha/container_20_azul.glb
+prop container_40_vermelho_letreiro_1 17.6 0 28 90 1 assets/casa_velha/container_40_vermelho_letreiro.glb
+prop container_40_vermelho_2 17.8 0 30.7 91 1 assets/casa_velha/container_40_vermelho.glb
+prop container_20_verde_1 16 2.59 30.6 89 1 assets/casa_velha/container_20_verde.glb
+prop container_20_azul_2 21.6 0 38 0 1 assets/casa_velha/container_20_azul.glb
+prop container_40_verde_1 13.6 0 36.6 0 1 assets/casa_velha/container_40_verde.glb
+prop palete_1 9.6 0 39.8 3.41217 1 assets/casa_velha/palete.glb
+prop palete_2 9.6 0.145 39.8 4.68553 1 assets/casa_velha/palete.glb
+prop palete_3 9.6 0.29 39.8 8.67152 1 assets/casa_velha/palete.glb
+prop palete_4 10.9 0 39.6 -6.84339 1 assets/casa_velha/palete.glb
+prop palete_5 10.9 0.145 39.6 -4.92981 1 assets/casa_velha/palete.glb
+prop palete_6 13 0 25.2 11.8024 1 assets/casa_velha/palete.glb
+prop palete_7 13 0.145 25.2 9.87814 1 assets/casa_velha/palete.glb
+prop palete_8 13 0.29 25.2 9.97647 1 assets/casa_velha/palete.glb
+prop palete_9 13 0.435 25.2 15.6849 1 assets/casa_velha/palete.glb
+prop palete_10 14.3 0 25 31.6372 1 assets/casa_velha/palete.glb
+prop palete_11 14.3 0.145 25 28.4592 1 assets/casa_velha/palete.glb
+prop palete_12 -2.6 0 47 -3.8257 1 assets/casa_velha/palete.glb
+prop palete_13 -2.6 0.145 47 -0.013518 1 assets/casa_velha/palete.glb
+prop palete_14 -2.6 0.29 47 1.39571 1 assets/casa_velha/palete.glb
+prop palete_15 -2.6 0.435 47 -0.639873 1 assets/casa_velha/palete.glb
+prop palete_16 -2.6 0.58 47 -1.94195 1 assets/casa_velha/palete.glb
+prop palete_17 -2.6 0 48.4 8.33884 1 assets/casa_velha/palete.glb
+prop palete_18 -2.6 0.145 48.4 10.4013 1 assets/casa_velha/palete.glb
+prop palete_19 -2.6 0.29 48.4 4.81429 1 assets/casa_velha/palete.glb
+prop palete_20 8 0 25.8 36.2728 1 assets/casa_velha/palete.glb
+prop palete_21 1.5 0 30 73.7044 1 assets/casa_velha/palete.glb
+prop tanque_ibc_1 0.5 0.08 44.5 -0.635545 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_2 1.75 0.08 44.5 1.46053 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_3 0.5 0.08 45.75 -2.41536 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_4 6.8 0.08 52.5 2.37651 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_5 8.05 0.08 52.5 1.91303 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_6 9.3 0.08 52.5 0.0390271 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_7 0.5 1.2 44.5 3 1 assets/casa_velha/tanque_ibc.glb
+prop tanque_ibc_8 6.8 1.2 52.5 -2 1 assets/casa_velha/tanque_ibc.glb
+prop palete_22 3.2 0.08 48 -3.53738 1 assets/casa_velha/palete.glb
+prop cardboard_box_01_8 3.12469 0.23 48.128 83.0912 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_9 3.08858 0.57 48.1042 106.176 1 assets/casa_velha/cardboard_box_01.glb
+prop palete_23 4.6 0.08 48 5.42312 1 assets/casa_velha/palete.glb
+prop cardboard_box_01_10 4.64404 0.23 48.1586 174.619 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_11 4.76416 0.57 47.8226 214.129 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_12 4.76877 0.91 47.8217 8.50634 1 assets/casa_velha/cardboard_box_01.glb
+prop palete_24 3.9 0.08 49.3 1.15353 1 assets/casa_velha/palete.glb
+prop cardboard_box_01_13 3.72074 0.23 49.1241 141.596 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_14 4.05927 0.57 49.4534 263.781 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_15 4.09901 0.91 49.4726 118.527 1 assets/casa_velha/cardboard_box_01.glb
+prop palete_25 10.3 0.08 47.6 -3.77385 1 assets/casa_velha/palete.glb
+prop cardboard_box_01_16 10.3985 0.23 47.4128 239.195 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_17 10.2514 0.57 47.5496 119.411 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_18 10.1677 0.91 47.4011 100.73 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_19 10.2406 1.25 47.7822 44.535 1 assets/casa_velha/cardboard_box_01.glb
+prop palete_26 10.3 0.08 49 5.57125 1 assets/casa_velha/palete.glb
+prop cardboard_box_01_20 10.2521 0.23 49.1075 111.132 1 assets/casa_velha/cardboard_box_01.glb
+prop cardboard_box_01_21 10.4216 0.57 48.8351 253.892 1 assets/casa_velha/cardboard_box_01.glb
+prop wooden_barrels_01_1 2.5 0.08 52 180 1 assets/casa_velha/wooden_barrels_01.glb
+prop wooden_crate_02_1 11.2 0.08 44 90 1 assets/casa_velha/wooden_crate_02.glb
+prop wooden_crate_02_2 11.2 0.54 44 85 1 assets/casa_velha/wooden_crate_02.glb
+prop wooden_military_crate_3 9.5 0.08 45 10 1 assets/casa_velha/wooden_military_crate.glb
+prop industrial_storage_cart_1 6 0.08 45.5 30 1 assets/casa_velha/industrial_storage_cart.glb
+prop metal_tool_chest_1 14 0.06 52.8 180 1 assets/casa_velha/metal_tool_chest.glb
+prop portable_generator_1 13.4 0.06 49 60 1 assets/casa_velha/portable_generator.glb
+prop old_military_compressor_1 16 0.06 51.5 90 1 assets/casa_velha/old_military_compressor.glb
+prop hand_truck_2 7.2 0.08 43 -40 1 assets/casa_velha/hand_truck.glb
+prop barrel_03_6 -0.9 0 21.4 70.4577 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_7 -1.5 0 21.3 194.95 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_8 6.9 0 21.4 160.685 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_9 9 0 23 116.391 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_10 12 0 23 265.435 1 assets/casa_velha/barrel_03.glb
+prop barrel_03_11 20 0 33.5 170.832 1 assets/casa_velha/barrel_03.glb
+prop metal_jerrycan_green_1 -12.5 0 41 227.398 1 assets/casa_velha/metal_jerrycan_green.glb
+prop metal_jerrycan_green_2 -11.8 0 41.3 89.2847 1 assets/casa_velha/metal_jerrycan_green.glb
+prop metal_jerrycan_green_3 22.8 0 44 225.147 1 assets/casa_velha/metal_jerrycan_green.glb
+prop old_tyre_4 10.2 0 30.5 145.718 1 assets/casa_velha/old_tyre.glb
+prop old_tyre_5 10.8 0 30.2 135.204 1 assets/casa_velha/old_tyre.glb
+prop old_tyre_6 3 0 37.5 167.058 1 assets/casa_velha/old_tyre.glb
+prop old_tyre_7 -12.7 0 46 289.202 1 assets/casa_velha/old_tyre.glb
+prop old_tyre_8 3 0.16 37.5 20 1 assets/casa_velha/old_tyre.glb
+prop oil_tin_1 13.8 0.71 52.8 0 1 assets/casa_velha/oil_tin.glb
+prop plastic_crate_02_1 15 0 26 20 1 assets/casa_velha/plastic_crate_02.glb
+prop industrial_pastic_container_1 14.9 0 26.8 -15 1 assets/casa_velha/industrial_pastic_container.glb
+prop wooden_crate_01_2 15.6 0 22.8 5 1 assets/casa_velha/wooden_crate_01.glb
+prop cement_bag_11 4.5 0 33 30 1 assets/casa_velha/cement_bag.glb
+prop shrub_02_4 -12.8 0 50 0 1 assets/casa_velha/shrub_02.glb
+prop shrub_02_5 22.6 0 53 90 0.8 assets/casa_velha/shrub_02.glb
+prop shrub_02_6 -13 0 28.5 60 0.7 assets/casa_velha/shrub_02.glb
+prop shrub_02_7 11.5 0 21.2 0 0.6 assets/casa_velha/shrub_02.glb
+prop shrub_02_8 -4 0 21.1 20 0.6 assets/casa_velha/shrub_02.glb
+prop fern_02_12 -12 0 54 22.3214 1 assets/casa_velha/fern_02.glb
+prop fern_02_13 -6 0 54.6 70.1789 1 assets/casa_velha/fern_02.glb
+prop fern_02_14 22 0 23.5 22.6266 1 assets/casa_velha/fern_02.glb
+prop arvore_44 -17 0 44 218.022 1.1 assets/arvore.glb
+prop arvore_45 27.5 0 46 130.671 1.15 assets/arvore.glb
+prop arvore_46 0 0 59.5 120.59 1.2 assets/arvore.glb
+prop arvore_47 -11 0 59 343.354 1.3 assets/arvore.glb
+nodoor
+nospawns
+door3 -7.2 0.15 8 0.9 2.3 0 v 0.55 0.68 0.62 -
+door3 -6.3 0.15 8 0.9 2.3 0 mv 0.55 0.68 0.62 -
+door3 -4.6 0.15 2 1 2.3 0 - 0.55 0.68 0.62 textures/casa_velha/porta_metal.jpg
+door3 -2.5 0.15 0 0.9 2.3 0 - 0.55 0.68 0.62 textures/casa_velha/porta_metal.jpg
+door3 2.4 0.15 0 0.9 2.3 0 - 0.55 0.68 0.62 textures/casa_velha/porta_metal.jpg
+door3 6.2 0.15 0 0.9 2.3 0 - 0.55 0.68 0.62 textures/casa_velha/porta_metal.jpg
+door3 8 0.15 0.45 0.95 2.3 -90 - 0.55 0.68 0.62 textures/casa_velha/porta_metal.jpg
+light 4 -6.6 2.9 3.2 0 -90 0.82 0.92 1.0 1.6 8 25 40 0.9 0
+light 4 -6.6 2.9 6.4 0 -90 0.82 0.92 1.0 1.2 8 25 40 0.9 0
+light 4 -4 2.9 1 0 -90 0.82 0.92 1.0 1 8 25 40 0.9 0
+light 4 4 2.9 1 0 -90 0.82 0.92 1.0 0.8 8 25 40 0.9 0
+light 4 -3 2.9 -2 0 -90 0.82 0.92 1.0 1.3 8 25 40 0.9 0
+light 4 2.7 2.9 -2 0 -90 0.82 0.92 1.0 1.5 8 25 40 0.9 0
+light 4 11 3.5 0 0 -90 0.82 0.92 1.0 1 8 25 40 0.9 0
+light 1 8.5 2.7 4.6 0 -60 1 0.72 0.4 8 12 25 55 1 0
+light 0 -6.3 2.6 8.7 0 0 1 0.78 0.5 3 6 25 40 1 0
+light 1 -9.0 6.7 19.65 0 -80 1 0.85 0.6 10 14 30 60 1 0
+light 4 5.0 3.8 48.0 0 -90 1 0.85 0.65 1.5 9 25 40 2 0
+stain -9.40 0.35 8.10 0 0 1 0.93 248 0.77 0.60 -
+stain -7.96 0.35 8.10 0 0 1 1.33 290 0.73 0.60 -
+stain -6.71 0.35 8.10 0 0 1 1.40 258 0.58 0.60 -
+stain -4.89 0.35 8.10 0 0 1 1.37 293 0.82 0.60 -
+stain -4.89 2.00 8.10 0 0 1 0.60 109 0.68 0.80 -
+stain -3.14 0.35 8.10 0 0 1 0.99 310 0.62 0.60 -
+stain -10.10 0.35 2.60 -1 0 0 1.26 141 0.70 0.60 -
+stain -10.10 1.89 2.60 -1 0 0 0.92 196 0.54 0.80 -
+stain -10.10 0.35 3.93 -1 0 0 1.16 26 0.58 0.60 -
+stain -10.10 0.35 5.30 -1 0 0 1.15 350 0.85 0.60 -
+stain -10.10 1.56 5.30 -1 0 0 0.83 85 0.67 0.80 -
+stain -10.10 0.35 6.93 -1 0 0 1.36 281 0.78 0.60 -
+stain -10.10 1.74 6.93 -1 0 0 0.73 94 0.48 0.80 -
+stain -1.90 0.35 2.60 1 0 0 1.01 101 0.62 0.60 -
+stain -1.90 0.35 3.95 1 0 0 0.94 89 0.63 0.60 -
+stain -1.90 0.35 5.67 1 0 0 0.96 13 0.69 0.60 -
+stain -1.90 2.46 5.67 1 0 0 0.72 135 0.53 0.80 -
+stain -1.90 0.35 7.57 1 0 0 1.04 216 0.57 0.60 -
+stain -1.40 0.35 2.10 0 0 1 0.95 64 0.70 0.60 -
+stain 0.42 0.35 2.10 0 0 1 1.30 229 0.55 0.60 -
+stain 1.90 0.35 2.10 0 0 1 0.92 16 0.65 0.60 -
+stain 3.13 0.35 2.10 0 0 1 1.34 293 0.82 0.60 -
+stain 4.66 0.35 2.10 0 0 1 1.12 28 0.74 0.60 -
+stain 4.66 1.99 2.10 0 0 1 0.84 287 0.52 0.80 -
+stain 6.39 0.35 2.10 0 0 1 0.99 235 0.71 0.60 -
+stain -5.40 0.35 -4.10 0 0 -1 1.49 150 0.75 0.60 -
+stain -5.40 2.29 -4.10 0 0 -1 1.04 7 0.52 0.80 -
+stain -3.59 0.35 -4.10 0 0 -1 1.38 141 0.74 0.60 -
+stain -1.63 0.35 -4.10 0 0 -1 1.16 41 0.60 0.60 -
+stain -1.63 2.09 -4.10 0 0 -1 0.78 47 0.63 0.80 -
+stain -0.39 0.35 -4.10 0 0 -1 0.99 143 0.79 0.60 -
+stain 1.55 0.35 -4.10 0 0 -1 1.34 125 0.60 0.60 -
+stain 1.55 1.61 -4.10 0 0 -1 0.63 271 0.52 0.80 -
+stain 3.38 0.35 -4.10 0 0 -1 1.38 301 0.64 0.60 -
+stain 3.38 2.50 -4.10 0 0 -1 0.76 229 0.58 0.80 -
+stain 4.65 0.35 -4.10 0 0 -1 1.33 321 0.76 0.60 -
+stain 6.54 0.35 -4.10 0 0 -1 1.27 71 0.73 0.60 -
+stain 8.19 0.35 -4.10 0 0 -1 0.93 56 0.83 0.60 -
+stain 9.51 0.35 -4.10 0 0 -1 1.48 69 0.79 0.60 -
+stain 11.38 0.35 -4.10 0 0 -1 1.30 117 0.75 0.60 -
+stain 12.95 0.35 -4.10 0 0 -1 1.41 234 0.78 0.60 -
+stain 12.95 1.70 -4.10 0 0 -1 0.79 181 0.51 0.80 -
+stain -6.10 0.35 -3.40 -1 0 0 0.90 167 0.85 0.60 -
+stain -6.10 0.35 -1.71 -1 0 0 1.39 292 0.80 0.60 -
+stain -6.10 0.35 -0.45 -1 0 0 1.12 289 0.66 0.60 -
+stain -6.10 0.35 1.27 -1 0 0 0.92 332 0.59 0.60 -
+stain -6.10 2.26 1.27 -1 0 0 0.64 322 0.63 0.80 -
+stain 8.60 0.35 4.10 0 0 1 1.37 24 0.56 0.60 -
+stain 10.35 0.35 4.10 0 0 1 0.97 319 0.59 0.60 -
+stain 10.35 2.37 4.10 0 0 1 1.00 260 0.61 0.80 -
+stain 11.73 0.35 4.10 0 0 1 1.40 91 0.73 0.60 -
+stain 11.73 2.14 4.10 0 0 1 1.05 91 0.54 0.80 -
+stain 14.10 0.35 -3.40 1 0 0 1.19 222 0.73 0.60 -
+stain 14.10 1.85 -3.40 1 0 0 0.70 229 0.52 0.80 -
+stain 14.10 0.35 -1.98 1 0 0 1.10 285 0.66 0.60 -
+stain 14.10 2.32 -1.98 1 0 0 0.62 348 0.66 0.80 -
+stain 14.10 0.35 -0.42 1 0 0 1.21 323 0.76 0.60 -
+stain 14.10 2.04 -0.42 1 0 0 1.03 134 0.62 0.80 -
+stain 14.10 0.35 1.09 1 0 0 1.12 119 0.59 0.60 -
+stain 14.10 1.68 1.09 1 0 0 0.91 107 0.69 0.80 -
+stain 14.10 0.35 2.70 1 0 0 1.09 313 0.84 0.60 -
+stain -4.37 0.16 6.24 0 1 0 1.22 225 0.49 0.60 -
+stain -6.58 0.16 4.32 0 1 0 1.05 221 0.55 0.60 -
+stain -9.18 0.16 2.77 0 1 0 1.57 188 0.49 0.60 -
+stain -5.76 0.16 4.57 0 1 0 1.30 132 0.44 0.60 -
+stain -3.70 0.16 3.29 0 1 0 1.01 255 0.64 0.60 -
+stain -6.34 0.16 2.82 0 1 0 1.14 97 0.60 0.60 -
+stain -3.82 0.16 7.34 0 1 0 1.06 321 0.65 0.60 -
+stain -5.34 0.16 5.39 0 1 0 1.60 177 0.56 0.60 -
+stain -8.34 0.16 2.50 0 1 0 1.06 67 0.41 0.60 -
+stain -7.15 2.99 5.89 0 -1 0 0.63 221 0.60 0.70 -
+stain -5.47 2.99 4.35 0 -1 0 0.72 187 0.60 0.70 -
+stain -4.97 2.10 2.11 0 0 1 1.19 111 0.55 0.60 -
+stain -7.44 0.40 2.11 0 0 1 1.30 172 0.72 0.60 -
+stain -5.72 2.10 7.89 0 0 -1 1.21 167 0.72 0.60 -
+stain -4.26 2.10 7.89 0 0 -1 0.81 94 0.80 0.60 -
+stain -9.89 0.40 5.75 1 0 0 0.90 250 0.72 0.60 -
+stain -9.89 0.40 6.80 1 0 0 0.86 157 0.67 0.60 -
+stain -2.11 1.90 6.50 -1 0 0 0.88 322 0.78 0.60 -
+stain -2.11 0.40 2.84 -1 0 0 0.80 303 0.77 0.60 -
+stain -2.86 0.16 0.66 0 1 0 1.91 140 0.46 0.60 -
+stain 2.32 0.16 0.88 0 1 0 1.85 353 0.68 0.60 -
+stain 5.44 0.16 1.04 0 1 0 1.47 2 0.56 0.60 -
+stain -5.16 0.16 1.46 0 1 0 1.23 284 0.67 0.60 -
+stain -0.41 0.16 1.09 0 1 0 1.57 12 0.45 0.60 -
+stain -1.70 2.99 1.00 0 -1 0 0.65 352 0.60 0.70 -
+stain 2.40 2.99 1.00 0 -1 0 0.64 232 0.60 0.70 -
+stain -5.04 0.40 0.11 0 0 1 1.14 213 0.52 0.60 -
+stain -0.80 0.40 0.11 0 0 1 1.23 256 0.73 0.60 -
+stain -0.53 0.60 1.89 0 0 -1 0.82 12 0.53 0.60 -
+stain 5.59 0.40 1.89 0 0 -1 1.20 103 0.69 0.60 -
+stain -5.89 0.40 0.52 1 0 0 1.18 106 0.69 0.60 -
+stain -5.89 1.90 0.80 1 0 0 0.71 102 0.58 0.60 -
+stain 7.89 1.90 1.26 -1 0 0 1.25 217 0.73 0.60 -
+stain 7.89 1.90 0.97 -1 0 0 1.07 149 0.51 0.60 -
+stain -3.32 0.16 -1.18 0 1 0 1.35 194 0.61 0.60 -
+stain -4.42 0.16 -0.91 0 1 0 1.09 61 0.65 0.60 -
+stain -5.49 0.16 -2.89 0 1 0 1.76 2 0.69 0.60 -
+stain -3.05 0.16 -2.03 0 1 0 1.80 178 0.46 0.60 -
+stain -3.76 0.16 -1.00 0 1 0 1.26 102 0.68 0.60 -
+stain -3.62 2.99 -1.81 0 -1 0 0.75 40 0.60 0.70 -
+stain -2.71 2.99 -2.40 0 -1 0 0.84 251 0.60 0.70 -
+stain -1.51 1.90 -3.89 0 0 1 0.91 142 0.62 0.60 -
+stain -0.97 0.40 -3.89 0 0 1 0.95 134 0.69 0.60 -
+stain -4.02 2.10 -0.11 0 0 -1 1.24 137 0.65 0.60 -
+stain -1.00 0.60 -0.11 0 0 -1 1.27 214 0.54 0.60 -
+stain -5.89 0.40 -1.39 1 0 0 0.91 56 0.60 0.60 -
+stain -5.89 1.90 -0.90 1 0 0 0.80 278 0.63 0.60 -
+stain -0.11 0.60 -1.75 -1 0 0 0.90 251 0.69 0.60 -
+stain -0.11 1.90 -1.98 -1 0 0 0.88 304 0.71 0.60 -
+stain 1.20 0.16 -3.03 0 1 0 1.25 188 0.50 0.60 -
+stain 1.22 0.16 -2.52 0 1 0 1.19 262 0.69 0.60 -
+stain 0.96 0.16 -0.61 0 1 0 1.10 354 0.52 0.60 -
+stain 4.08 0.16 -1.30 0 1 0 1.43 230 0.46 0.60 -
+stain 2.02 2.99 -2.28 0 -1 0 0.72 12 0.60 0.70 -
+stain 2.56 2.99 -1.72 0 -1 0 0.81 180 0.60 0.70 -
+stain 3.37 2.10 -3.89 0 0 1 0.71 266 0.58 0.60 -
+stain 0.43 0.60 -3.89 0 0 1 1.24 207 0.63 0.60 -
+stain 3.92 2.10 -0.11 0 0 -1 1.21 235 0.70 0.60 -
+stain 4.52 0.60 -0.11 0 0 -1 1.11 163 0.69 0.60 -
+stain 0.11 0.40 -2.60 1 0 0 1.24 144 0.57 0.60 -
+stain 0.11 0.60 -1.32 1 0 0 0.85 164 0.63 0.60 -
+stain 5.39 2.10 -1.61 -1 0 0 1.01 314 0.70 0.60 -
+stain 5.39 1.90 -0.74 -1 0 0 1.17 176 0.62 0.60 -
+stain 7.46 0.16 -3.39 0 1 0 1.54 281 0.45 0.60 -
+stain 7.41 0.16 -1.94 0 1 0 1.10 195 0.57 0.60 -
+stain 6.76 2.99 -1.99 0 -1 0 0.79 298 0.60 0.70 -
+stain 6.75 2.99 -2.09 0 -1 0 0.88 76 0.60 0.70 -
+stain 7.06 2.10 -3.89 0 0 1 1.01 262 0.78 0.60 -
+stain 6.94 0.40 -3.89 0 0 1 0.85 22 0.61 0.60 -
+stain 6.03 2.10 -0.11 0 0 -1 1.08 209 0.70 0.60 -
+stain 6.09 1.90 -0.11 0 0 -1 1.14 190 0.78 0.60 -
+stain 5.61 2.10 -2.90 1 0 0 0.98 335 0.55 0.60 -
+stain 5.61 0.60 -3.38 1 0 0 0.98 81 0.67 0.60 -
+stain 7.89 1.90 -0.52 -1 0 0 1.10 286 0.75 0.60 -
+stain 7.89 1.90 -2.28 -1 0 0 1.16 281 0.69 0.60 -
+stain 10.85 0.16 1.99 0 1 0 1.23 247 0.61 0.60 -
+stain 13.41 0.16 1.25 0 1 0 1.48 288 0.64 0.60 -
+stain 10.29 0.16 1.08 0 1 0 1.32 224 0.55 0.60 -
+stain 8.93 0.16 2.78 0 1 0 1.15 139 0.49 0.60 -
+stain 8.93 0.16 0.45 0 1 0 1.32 191 0.68 0.60 -
+stain 10.23 0.16 0.58 0 1 0 1.66 26 0.46 0.60 -
+stain 9.96 0.16 0.76 0 1 0 1.58 67 0.66 0.60 -
+stain 10.76 0.16 1.99 0 1 0 1.21 192 0.52 0.60 -
+stain 11.55 0.16 1.32 0 1 0 1.98 325 0.43 0.60 -
+stain 11.10 3.59 0.46 0 -1 0 0.69 178 0.60 0.70 -
+stain 10.38 3.59 -1.42 0 -1 0 0.85 242 0.60 0.70 -
+stain 9.01 0.40 -3.89 0 0 1 0.86 50 0.57 0.60 -
+stain 10.96 0.40 -3.89 0 0 1 0.99 252 0.77 0.60 -
+stain 9.68 0.60 3.89 0 0 -1 1.02 2 0.76 0.60 -
+stain 12.77 2.10 3.89 0 0 -1 1.12 107 0.65 0.60 -
+stain 8.11 2.10 -0.25 1 0 0 0.95 27 0.79 0.60 -
+stain 8.11 0.40 0.99 1 0 0 0.71 265 0.51 0.60 -
+stain 13.89 0.40 3.59 -1 0 0 1.01 323 0.65 0.60 -
+stain 13.89 2.10 -3.36 -1 0 0 1.08 310 0.60 0.60 -
+cloth 2.2 2.6 -2.3 90 1.8 2.4 0 0.85 0.3 0.3 0.03 0.2 0 1.2 textures/casa_velha/cortina.jpg
+start 2 0 10.5 180
+paint -55 -25 110 1024
+layer 3.5 textures/casa_velha/Ground106_2K-JPG_Color.jpg|textures/casa_velha/Ground106_2K-JPG_NormalGL.jpg|textures/casa_velha/Ground106_2K-JPG_Roughness.jpg|textures/casa_velha/Ground106_2K-JPG_Displacement.jpg|textures/casa_velha/Ground106_2K-JPG_AmbientOcclusion.jpg||||0
+layer 3.0 textures/casa_velha/Ground068_2K-JPG_Color.jpg|textures/casa_velha/Ground068_2K-JPG_NormalGL.jpg|textures/casa_velha/Ground068_2K-JPG_Roughness.jpg|textures/casa_velha/Ground068_2K-JPG_Displacement.jpg|textures/casa_velha/Ground068_2K-JPG_AmbientOcclusion.jpg||||0
+layer 2.6 textures/casa_velha/Ground085_2K-JPG_Color.jpg|textures/casa_velha/Ground085_2K-JPG_NormalGL.jpg|textures/casa_velha/Ground085_2K-JPG_Roughness.jpg|textures/casa_velha/Ground085_2K-JPG_Displacement.jpg|textures/casa_velha/Ground085_2K-JPG_AmbientOcclusion.jpg||||-0.05
+layer 2 ||||||agua||0
+prop pedrisco_1 -26.2677 0 18.4694 189.194 1.08117 assets/casa_velha/pedrisco.glb
+prop pedrisco_2 35.4215 0 15.4222 152.06 1.01621 assets/casa_velha/pedrisco.glb
+prop pedrisco_3 9.15345 0 10.2515 297.984 0.971119 assets/casa_velha/pedrisco.glb
+prop pedrisco_4 8.0075 0 28.726 182.313 1.1425 assets/casa_velha/pedrisco.glb
+prop pedrisco_5 -2.69088 0 38.3503 119.123 0.945128 assets/casa_velha/pedrisco.glb
+prop pedrisco_6 15.5984 0 41.1037 228.536 1.08526 assets/casa_velha/pedrisco.glb
+prop weed_plant_02_11 22.7048 0 13.2085 196.344 0.72982 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_9 -37.4783 0 20.652 331.715 1.06521 assets/casa_velha/grass_medium_02.glb
+prop nettle_plant_1 38.4251 0 12.9894 222.012 1.07609 assets/casa_velha/nettle_plant.glb
+prop grass_medium_02_10 -34.6842 0 13.0069 225.1 0.804343 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_11 -2.588 0 12.9805 334.985 0.708056 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_12 9.21652 0 13.1064 108.735 0.953071 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_12 -1.82329 0 21.0134 336.189 0.732771 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_13 26.9973 0 12.8369 250.456 0.942789 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_14 19.1169 0 12.9751 357.525 1.09564 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_13 26.6705 0 13.339 29.8529 0.983316 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_15 -2.13202 0 12.9075 240.972 1.29199 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_16 35.0421 0 12.6032 6.39975 1.13161 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_14 23.6188 0 13.0499 18.0499 1.16441 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_17 -13.376 0 13.346 179.315 1.10172 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_18 22.2456 0 20.5091 5.30264 1.09042 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_15 -11.8707 0 13.0836 59.7589 1.21658 assets/casa_velha/weed_plant_02.glb
+prop nettle_plant_2 -32.9786 0 21.1941 206.987 0.963234 assets/casa_velha/nettle_plant.glb
+prop grass_medium_02_19 43.1738 0 12.9934 343.401 0.798415 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_16 -5.59805 0 21.529 340.172 1.17077 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_17 -14.4878 0 20.9975 234.341 1.18116 assets/casa_velha/weed_plant_02.glb
+prop nettle_plant_3 22.9596 0 20.5124 54.4034 1.19957 assets/casa_velha/nettle_plant.glb
+prop grass_medium_02_20 -6.35914 0 21.4479 216.642 1.23767 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_18 16.4383 0 55.4 299.963 1.10588 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_19 12.1843 0 -6.5 192.441 0.969991 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_20 4.43316 0 55.4 167.516 0.803293 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_21 -4.12387 0 55.4 143.347 0.96052 assets/casa_velha/grass_medium_02.glb
+prop grass_medium_02_22 -3.94505 0 55.4 290.111 0.844898 assets/casa_velha/grass_medium_02.glb
+prop weed_plant_02_21 12.3516 0 -6.5 311.894 0.885834 assets/casa_velha/weed_plant_02.glb
+prop grass_medium_02_23 3.63974 0 55.4 73.6718 1.13539 assets/casa_velha/grass_medium_02.glb
+prop nettle_plant_4 14.3394 0 -6.5 294.779 1.18173 assets/casa_velha/nettle_plant.glb
+prop weed_plant_02_22 -12.5 0 -4.6615 313.44 0.92914 assets/casa_velha/weed_plant_02.glb
+prop weed_plant_02_23 21.636 0 55.4 114.736 0.816604 assets/casa_velha/weed_plant_02.glb
+prop grass_bermuda_01_13 -9.53552 0 55.3 174.754 3.15293 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_15 -9.53552 0 55.3 199.021 0.608336 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_14 -6.64876 0 55.3 180.213 2.44461 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_16 -6.64876 0 55.3 271.782 0.881814 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_15 -4.10112 0 55.3 1.46345 2.77658 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_16 -1.95505 0 55.3 178.074 2.59077 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_17 -1.95505 0 55.3 243.951 0.603784 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_17 0.649069 0 55.3 -7.4238 2.46223 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_18 2.7714 0 55.3 4.45304 3.14075 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_19 4.40183 0 55.3 187.557 3.05845 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_20 6.88129 0 55.3 -4.45359 2.54419 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_21 9.72633 0 55.3 174.39 2.72943 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_18 9.72633 0 55.3 97.5986 0.851869 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_22 11.7946 0 55.3 179.856 2.76495 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_23 13.6094 0 55.3 2.09601 2.84795 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_24 17.5811 0 55.3 -4.1812 2.47805 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_25 20.4358 0 55.3 183.624 2.51548 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_26 22.6547 0 55.3 180.173 2.40154 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_27 -13.4 0 22.8716 96.5917 2.62148 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_28 -13.4 0 25.6524 85.6867 2.55737 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_19 -13.4 0 25.6524 31.4716 0.782567 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_29 -13.4 0 27.946 85.2965 2.86635 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_30 -13.4 0 29.638 88.53 2.81477 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_31 -13.4 0 31.6325 97.1303 2.41236 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_32 -13.4 0 37.5891 91.5183 2.68493 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_33 -13.4 0 40.5453 87.7075 3.05323 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_34 -13.4 0 42.5947 88.1022 2.63323 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_20 -13.4 0 42.5947 263.141 0.733932 assets/casa_velha/fern_02.glb
+prop fern_02_21 -13.4 0 44.2306 87.6736 0.626576 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_35 -13.4 0 46.6973 86.9906 2.41556 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_36 -13.4 0 49.3315 275.397 2.81833 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_37 -13.4 0 52.7388 269.897 2.48803 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_22 -13.4 0 52.7388 318.398 0.762479 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_38 -13.4 0 54.6572 272.7 2.99726 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_23 -13.4 0 54.6572 297.365 0.881274 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_39 23.4 0 27.5688 267.361 3.07442 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_40 23.4 0 30.549 88.4095 2.6599 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_24 23.4 0 30.549 244.859 0.706026 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_41 23.4 0 33.3677 82.1849 2.82464 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_25 23.4 0 33.3677 155.895 0.751432 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_42 23.4 0 34.9968 277.515 2.90657 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_26 23.4 0 37.835 230.967 0.679732 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_43 23.4 0 40.3848 90.6761 2.89701 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_44 23.4 0 42.7132 277.214 2.49044 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_45 23.4 0 44.547 277.345 2.46758 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_46 23.4 0 47.4517 270.186 3.13247 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_47 23.4 0 49.4354 273.846 3.0718 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_48 23.4 0 51.8337 265.219 2.76871 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_49 23.4 0 54.2916 86.9681 2.66693 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_50 -10.5608 0 -6.4 6.78707 3.08949 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_51 -8.18147 0 -6.4 -3.44288 2.6364 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_52 -6.35948 0 -6.4 185.94 2.92617 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_53 -3.59142 0 -6.4 4.20553 3.19145 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_54 -0.683888 0 -6.4 2.69188 2.94028 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_55 4.74037 0 -6.4 184.155 2.61495 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_56 7.22536 0 -6.4 -1.39146 2.40346 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_57 9.64553 0 -6.4 7.40388 2.73433 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_58 12.4674 0 -6.4 178.073 2.95411 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_59 14.5611 0 -6.4 180.418 2.91856 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_27 14.5611 0 -6.4 268.48 0.896918 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_60 -12.4 0 -5.89995 274.847 2.86035 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_61 -12.4 0 0.489926 96.5692 2.42046 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_62 -12.4 0 3.34417 270.583 2.8308 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_63 -12.4 0 5.6686 272.964 2.7714 assets/casa_velha/grass_bermuda_01.glb
+prop fern_02_28 -12.4 0 5.6686 243.442 0.73592 assets/casa_velha/fern_02.glb
+prop grass_bermuda_01_64 -12.4 0 7.28313 265.668 2.69953 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_65 -12.4 0 9.66901 276.077 2.78937 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_66 16.4 0 -4.50775 90.4822 2.53658 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_67 16.4 0 5.15478 86.6388 2.80391 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_68 16.4 0 7.01015 271.65 2.85589 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_69 16.4 0 9.62217 82.1717 2.64539 assets/casa_velha/grass_bermuda_01.glb
+prop grass_bermuda_01_70 16.4 0 11.2276 95.4745 2.93449 assets/casa_velha/grass_bermuda_01.glb
