@@ -10,6 +10,8 @@ out vec4 FragColor;
 
 uniform sampler2D uBaseTex;
 uniform int uAlphaCut; // folhagem: recorte pelo alpha da textura
+uniform int uAerial;   // mata ao fundo: perspectiva aérea (some na cor do céu com a distância)
+uniform samplerCube uSkyCube;
 uniform sampler2D uMRTex;
 uniform sampler2D uNormalTex;
 uniform sampler2D uEmissiveTex;
@@ -40,5 +42,10 @@ void main() {
 
     applyPaint(vPos, geoN, albedo, N, rough);
     vec3 col = shadePBR(albedo, metal, rough, ao, N, vPos) + emissive;
+    if (uAerial == 1) {
+        vec3 rd = normalize(vPos - uCamPos);
+        float air = 1.0 - exp(-max(length(vPos - uCamPos) - 60.0, 0.0) / 600.0);
+        col = mix(col, texture(uSkyCube, vec3(rd.x, max(rd.y, 0.02), rd.z)).rgb * vec3(0.72, 0.82, 0.98), air * 0.85);
+    }
     FragColor = vec4(col, 1.0);
 }

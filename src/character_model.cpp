@@ -328,11 +328,57 @@ bool decodeEmbedded(const aiScene* sc, const aiMaterial* m, std::initializer_lis
 
 // Folhagem: se a imagem já tem alpha, recorta por ele; se não tem e o material é de folhas, o fundo
 // branco vira transparente (e ganha a cor média das folhas, para o filtro não deixar borda branca).
+// Pontos transparentes guardam uma cor que não aparece (muitas vezes branco); nas versões menores da
+// textura (mipmap) e na compressão essa cor escoa para a borda das folhas e fica um halo branco.
+// Troca pela cor das folhas vizinhas (espalha a cor dos opacos para fora, várias passadas).
+void bleedTransparent(Image& im) {
+    const int w = im.w, h = im.h;
+    std::vector<unsigned char> known((size_t)w * h);
+    double sum[3] = {0, 0, 0};
+    size_t kept = 0;
+    for (size_t i = 0; i < known.size(); ++i) {
+        known[i] = im.px[i * 4 + 3] >= 128;
+        if (known[i]) { for (int k = 0; k < 3; ++k) sum[k] += im.px[i * 4 + k]; ++kept; }
+    }
+    if (!kept) return;
+    for (int pass = 0; pass < 16; ++pass) {
+        std::vector<unsigned char> next = known;
+        bool any = false;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                size_t i = (size_t)y * w + x;
+                if (known[i]) continue;
+                int acc[3] = {0, 0, 0}, c = 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        int xx = x + dx, yy = y + dy;
+                        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+                        size_t j = (size_t)yy * w + xx;
+                        if (!known[j]) continue;
+                        for (int k = 0; k < 3; ++k) acc[k] += im.px[j * 4 + k];
+                        ++c;
+                    }
+                if (!c) continue;
+                for (int k = 0; k < 3; ++k) im.px[i * 4 + k] = (unsigned char)(acc[k] / c);
+                next[i] = 1;
+                any = true;
+            }
+        known.swap(next);
+        if (!any) break;
+    }
+    for (size_t i = 0; i < known.size(); ++i) // o resto (longe de qualquer folha): cor média
+        if (!known[i])
+            for (int k = 0; k < 3; ++k) im.px[i * 4 + k] = (unsigned char)(sum[k] / kept);
+}
+
 bool cutoutAlpha(Image& im, std::string name) {
     const size_t n = (size_t)im.w * im.h;
     size_t holes = 0;
     for (size_t i = 0; i < n; ++i) holes += im.px[i * 4 + 3] < 128;
-    if (holes > n / 50) return true;
+    if (holes > n / 50) {
+        bleedTransparent(im);
+        return true;
+    }
     for (char& ch : name) ch = (char)std::tolower((unsigned char)ch);
     if (name.find("leaf") == std::string::npos && name.find("leaves") == std::string::npos && name.find("folh") == std::string::npos && name.find("foliage") == std::string::npos)
         return false;

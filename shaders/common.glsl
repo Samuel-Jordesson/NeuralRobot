@@ -299,11 +299,18 @@ uniform int uPaintCount;
 const float kParallax = 0.035; // profundidade aparente do relevo (m)
 
 // Só em superfícies viradas para cima (chão); 'geoN' = normal da geometria.
+uniform int uPaintOutside; // camada que cobre o chão fora da área pintada (-1 = nada)
 void applyPaint(vec3 pos, vec3 geoN, inout vec3 albedo, inout vec3 N, inout float rough) {
     if (uPaintOn == 0 || geoN.y < 0.5) return;
     vec2 uv = (pos.xz - uPaintRect.xy) * uPaintRect.z;
-    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return;
-    vec4 w = texture(uPaintWeights, uv) * smoothstep(0.5, 0.75, geoN.y);
+    vec4 w;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+        // fora da área pintada: o campo em volta usa a mesma textura do chão da borda do mapa
+        if (uPaintOutside < 0) return;
+        w = vec4(0.0);
+        w[uPaintOutside] = 1.0;
+    } else w = texture(uPaintWeights, uv);
+    w *= smoothstep(0.5, 0.75, geoN.y);
     float total = 0.0, water = 0.0;
     for (int i = 0; i < 4; ++i) {
         if (i >= uPaintCount) break;

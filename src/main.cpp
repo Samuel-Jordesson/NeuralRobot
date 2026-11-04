@@ -510,6 +510,8 @@ int main(int argc, char** argv) {
         }
         CharacterModel::releaseShared(); // solta o arquivo aberto e as texturas guardadas para as partes
         world.terrain = &terrain;
+        scene.vista = id == SceneCasa; // fundo gerado (morros com mata, serras e montanhas)
+        scene.vistaTree = scene.vista ? assets.mesh("assets/arvore.glb") : nullptr; // a mata do fundo usa a árvore do cenário
         scene.terrain = &terrain;
         scene.paint = &paint;
         const glm::vec3 start = L.start;

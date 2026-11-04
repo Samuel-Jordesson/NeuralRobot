@@ -1,4 +1,5 @@
 #pragma once
+#include "tree_wall.h"
 #include <unordered_set>
 #include "character_model.h"
 #include "gl_util.h"
@@ -31,6 +32,8 @@ struct RenderScene {
     std::vector<Prop> props;
     const struct Terrain* terrain = nullptr;    // relevo esculpido no editor
     std::vector<const class Cloth*> cloths;     // tecidos simulados (malha já no mundo)
+    bool vista = false;                         // fundo de morros e montanhas em volta do mapa
+    const CharacterModel* vistaTree = nullptr;  // modelo de árvore fotografado para a mata ao fundo
     // profundidade de campo (câmera de cena do editor de animação): lente em mm, abertura f/, foco em m
     struct Dof {
         bool on = false;
@@ -157,6 +160,10 @@ private:
     GLuint shadowFbo_ = 0, shadowTex_ = 0;
     GLuint shadowRaw_ = 0, shadowMinFbo_ = 0; // sombra como desenhada; shadowTex_ = ela engordada 1 texel
     Shader shadowMin_;
+    Mesh vista_; // fundo gerado (criado na primeira vez)
+    TreeWall trees_; // mata ao fundo (impostors)
+    Shader impostor_;
+    GLuint bakeImpostor(const CharacterModel& m, float& aspect, float& height);
     // sombra das luzes do editor: mapas em cubo (distância até a luz) para até 4 luzes
     static constexpr int kLightShadows = 4, kLightShadowRes = 512;
     Shader dist_;

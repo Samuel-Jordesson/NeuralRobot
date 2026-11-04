@@ -6,8 +6,9 @@ in vec3 vNormal;
 in vec3 vLocal;
 out vec4 FragColor;
 
-uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta), 6 = vidro
+uniform int uMaterial; // 0 = chão, 1 = bloco, 2 = bola, 3 = metal liso (cápsulas), 4 = madeira (porta), 6 = vidro, 8 = fundo (morros), 9 = campo
 uniform vec3 uColor;
+uniform samplerCube uSkyCube; // céu (perspectiva aérea do fundo)
 uniform vec3 uBoxMin, uBoxMax; // limites do bloco (desgaste nas quinas)
 uniform sampler2D uPanelTex;   // material 7: imagem na peça (folha de porta)
 
@@ -84,6 +85,28 @@ void main() {
         albedo *= 1.0 - 0.5 * joint;
         rough = clamp(0.86 + 0.08 * mid - 0.22 * stain + 0.05 * joint, 0.4, 1.0);
         N = bumpNormal(N, vec3(1, 0, 0), vec3(0, 0, 1), p, 1.0);
+    } else if (uMaterial == 9) {
+        // campo em volta do mapa: capim em manchas de verde e palha, com terra aparecendo
+        vec2 p = vPos.xz;
+        float big = texture(uNoise, p / 60.0).r, mid = texture(uNoise, p / 13.0).g, fine = texture(uNoise, p * 0.31).b;
+        vec3 green = vec3(0.13, 0.19, 0.06), straw = vec3(0.30, 0.27, 0.12), dirt = vec3(0.26, 0.17, 0.10);
+        albedo = mix(green, straw, smoothstep(0.45, 0.8, big)) * (0.75 + 0.45 * mid) * (0.85 + 0.3 * fine);
+        albedo = mix(albedo, dirt, smoothstep(0.78, 0.9, mid) * 0.6);
+        rough = 0.95;
+        N = bumpNormal(N, vec3(1, 0, 0), vec3(0, 0, 1), p, 1.8);
+    } else if (uMaterial == 8) {
+        // fundo (vista): copas de mata em manchas, clareiras de capim e pedra nas encostas íngremes
+        vec2 p = vPos.xz;
+        float big = texture(uNoise, p / 180.0).r, mid = texture(uNoise, p / 37.0).g, fine = texture(uNoise, p / 9.0).b;
+        vec3 forest = mix(vec3(0.05, 0.10, 0.035), vec3(0.11, 0.17, 0.05), mid) * (0.75 + 0.5 * fine); // copas
+        vec3 grass = vec3(0.20, 0.22, 0.10) * (0.8 + 0.3 * fine);
+        vec3 rock = vec3(0.24, 0.22, 0.19) * (0.8 + 0.3 * mid);
+        float clearing = smoothstep(0.62, 0.75, big);
+        albedo = mix(forest, grass, clearing);
+        albedo = mix(albedo, rock, smoothstep(0.38, 0.22, N.y)); // só encosta muito íngreme: pedra
+        rough = 0.95;
+        // copas: relevo miúdo na normal (de perto parece mata, não um tapete)
+        N = bumpNormal(N, vec3(1, 0, 0), vec3(0, 0, 1), p * 0.25, 2.5 * (1.0 - clearing));
     } else if (uMaterial == 5) {
         // terreno: terra com manchas de grama seca (a pintura do editor vai por cima)
         vec2 p = vPos.xz;
@@ -127,7 +150,15 @@ void main() {
         rough = 0.38 + 0.1 * texture(uNoise, l.xz * (20.0 / 128.0)).b;
     }
 
-    if (uMaterial == 0 || uMaterial == 5) applyPaint(vPos, normalize(vNormal), albedo, N, rough); // só chão e terreno
+    if (uMaterial == 0 || uMaterial == 5 || uMaterial == 9) applyPaint(vPos, normalize(vNormal), albedo, N, rough); // só chão e terreno
     vec3 col = shadePBR(albedo, metal, rough, 1.0, N, vPos);
+    if (uMaterial == 8 || uMaterial == 9) {
+        // perspectiva aérea: quanto mais longe, mais a cor vira a do céu atrás (mais azulada e clara)
+        vec3 rd = normalize(vPos - uCamPos);
+        float dist = length(vPos - uCamPos);
+        vec3 skyHere = texture(uSkyCube, vec3(rd.x, max(rd.y, 0.02), rd.z)).rgb;
+        float air = 1.0 - exp(-max(dist - 80.0, 0.0) / 1100.0); // perto quase sem névoa, longe some no céu
+        col = mix(col, skyHere * vec3(0.72, 0.82, 0.98), air * 0.85);
+    }
     FragColor = vec4(col, 1.0);
 }

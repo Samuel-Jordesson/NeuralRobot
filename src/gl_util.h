@@ -37,6 +37,10 @@ struct Mesh {
 Mesh makeCube();                    // cubo unitário centrado na origem
 Mesh makeSphere(int slices, int stacks); // raio 1
 Mesh makePlane(float halfSize);     // plano y = 0
+// Fundo do cenário (estilo AAA): três anéis de relevo em volta do mapa — morros com mata perto,
+// serras no meio, montanhas ao longe — de raio interno r0 até o externo r1 (m). x,y,z,nx,ny,nz + camada.
+Mesh makeVista(float r0, float r1, unsigned seed);
+float vistaHeightAt(float x, float z, float r0, float r1, unsigned seed); // altura do fundo no ponto (m)
 
 GLuint makeTexture2D(const unsigned char* rgba, int w, int h, bool srgb);
 GLuint makeSolidTexture(unsigned char r, unsigned char g, unsigned char b, unsigned char a, bool srgb);

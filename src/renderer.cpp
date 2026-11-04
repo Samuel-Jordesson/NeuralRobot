@@ -1,6 +1,8 @@
 #include "renderer.h"
+#include <stb_image_write.h>
 #include "terrain.h"
 #include "cloth.h"
+#include "tree_wall.h"
 
 #include <stb_image.h>
 
@@ -217,7 +219,7 @@ GLuint makeNoiseTexture() {
 
 bool Renderer::init(const std::string& dir, int width, int height) {
     auto ld = [&](Shader& s, const char* vs, const char* fs) { return s.load(dir + "/" + vs, dir + "/" + fs); };
-    bool ok = ld(dist_, "skinned.vert", "dist.frag") && ld(shadowMin_, "fullscreen.vert", "shadow_min.frag") && ld(skinned_, "skinned.vert", "character.frag") && ld(skinnedDepth_, "skinned.vert", "depth.frag") &&
+    bool ok = ld(impostor_, "skinned.vert", "impostor.frag") && ld(dist_, "skinned.vert", "dist.frag") && ld(shadowMin_, "fullscreen.vert", "shadow_min.frag") && ld(skinned_, "skinned.vert", "character.frag") && ld(skinnedDepth_, "skinned.vert", "depth.frag") &&
               ld(skinnedPre_, "skinned.vert", "prepass.frag") && ld(world_, "static.vert", "world.frag") &&
               ld(worldDepth_, "static.vert", "depth.frag") && ld(worldPre_, "static.vert", "prepass.frag") &&
               ld(sky_, "fullscreen.vert", "sky.frag") && ld(skyAtmo_, "fullscreen.vert", "sky_atmo.frag") &&
@@ -244,6 +246,7 @@ bool Renderer::init(const std::string& dir, int width, int height) {
         sh->set("uPaintNormal", (int)kUnitPaintN);
         sh->set("uPaintMask", (int)kUnitPaintM);
         sh->set("uPaintOn", 0);
+        sh->set("uPaintOutside", -1);
         sh->set("uRoofMap", (int)kUnitRoof);
         sh->set("uRoofOn", 0);
         sh->set("uLightCount", 0);
@@ -831,7 +834,7 @@ void Renderer::drawGlass(const RenderScene& s) {
 void Renderer::drawWorld(Shader& sh, const RenderScene& s, Pass pass) {
     bool color = pass == Pass::Color;
     if (pass != Pass::Shadow) {
-        if (color) sh.set("uMaterial", 0);
+        if (color) sh.set("uMaterial", s.vista ? 9 : 0); // com fundo de morros: chão de campo (a pintura vai por cima)
         sh.set("uModel", glm::mat4(1.0f));
         plane_.draw();
     }
@@ -971,11 +974,49 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         for (int i = 0; i < (int)p.layers.size() && i < 4; ++i) water[i] = p.layers[i].kind == 1 ? 1.0f : 0.0f;
         sh.set("uPaintWater", water);
         sh.set("uPaintCount", (int)std::min<size_t>(p.layers.size(), 4));
+        // com fundo de morros: o campo em volta do mapa usa a camada de grama (a cor média mais verde)
+        static GLuint greenFor = 0;
+        static int greenest = -1;
+        int outside = -1;
+        if (s.vista && p.albedoArr) {
+            if (greenFor != p.albedoArr) { // cor média de cada camada: o menor mipmap (1x1)
+                greenFor = p.albedoArr;
+                greenest = -1;
+                glBindTexture(GL_TEXTURE_2D_ARRAY, p.albedoArr);
+                int lvl = 0, w = 0;
+                for (;; ++lvl) {
+                    glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, lvl, GL_TEXTURE_WIDTH, &w);
+                    if (w <= 1) break;
+                    if (lvl > 16) break;
+                }
+                GLint layersN = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, lvl, GL_TEXTURE_DEPTH, &layersN);
+                std::vector<unsigned char> px((size_t)std::max(layersN, 1) * 4 * 4);
+                glGetTexImage(GL_TEXTURE_2D_ARRAY, lvl, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                float best = -1e9f;
+                for (int c = 0; c < (int)std::min<size_t>(p.layers.size(), 4) && c < layersN; ++c) {
+                    if (p.layers[c].kind == 1) continue;
+                    const float r = px[c * 4], g = px[c * 4 + 1], b = px[c * 4 + 2];
+                    const float green = g - 0.5f * (r + b);
+                    if (green > best) { best = green; greenest = c; }
+                }
+            }
+            outside = greenest;
+        }
+        sh.set("uPaintOutside", outside);
     };
     worldSh.use();
     worldSh.set("uViewProj", vp);
     if (color) { setLightingUniforms(worldSh, s); paintUniforms(worldSh); }
     drawWorld(worldSh, s, pass);
+    if (s.vista && pass != Pass::Shadow) { // fundo: morros, serras e montanhas (não fazem sombra)
+        if (!vista_.vao) vista_ = makeVista(125.0f, 960.0f, 7u);
+        worldSh.set("uModel", glm::mat4(1.0f));
+        if (color) worldSh.set("uMaterial", 8);
+        glDisable(GL_CULL_FACE);
+        vista_.draw();
+        if (color) glEnable(GL_CULL_FACE);
+    }
     if (s.terrain && s.terrain->active) { // relevo (na frente do chão plano)
         worldSh.set("uModel", glm::mat4(1.0f));
         if (color) worldSh.set("uMaterial", 5);
@@ -1052,6 +1093,34 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         glDepthFunc(GL_LESS);
     }
     if (color) skinSh.set("uPaintOn", 0); // personagens e armas não recebem a pintura do chão
+    // mata ao fundo (impostors: árvores em planos recortados), entre o mapa e os morros; não faz sombra
+    if (s.vista && pass != Pass::Shadow && trees_.built()) {
+        skinSh.set("uModel", glm::mat4(1.0f));
+        skinSh.setMat4Array("uBones", identityBones_, BONE_COUNT);
+        skinSh.set("uBaseTex", 0);
+        skinSh.set("uAlphaCut", 1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, trees_.texture());
+        if (color) {
+            skinSh.set("uMRTex", 1);
+            skinSh.set("uNormalTex", 2);
+            skinSh.set("uEmissiveTex", 3);
+            skinSh.set("uMetallic", 0.0f);
+            skinSh.set("uRoughness", 1.0f);
+            skinSh.set("uEmissive", glm::vec3(0.0f));
+            skinSh.set("uUseAO", 0);
+            skinSh.set("uAerial", 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::mr());
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::normal());
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, ClothDefaults::black());
+        }
+        trees_.draw();
+        skinSh.set("uAlphaCut", 0);
+        if (color) skinSh.set("uAerial", 0);
+    }
     // tecidos: malha já no mundo, desenhada com o material dos modelos (dupla face)
     for (const Cloth* cl : s.cloths) {
         skinSh.set("uModel", glm::mat4(1.0f));
@@ -1204,6 +1273,12 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     const float skyFogDist = 700.0f;
     g_prof.mark("inicio");
     if (s.world) updateRoof(*s.world);
+    if (s.vista && s.vistaTree && !trees_.built()) {
+        // mata ao fundo: impostor do modelo de árvore do cenário (fotos de 4 ângulos num atlas 2x2)
+        float aspect = 1.0f, height = 1.0f;
+        GLuint atlas = bakeImpostor(*s.vistaTree, aspect, height);
+        trees_.build(100.0f, 240.0f, 21u, atlas, aspect);
+    }
     updateSun();
     updateEnvironment(s.time);
     g_prof.mark("ceu");
@@ -1534,4 +1609,68 @@ void Renderer::renderLightShadows(const RenderScene& s) {
     }
     glClearColor(0, 0, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+// Fotografa o modelo (só cor, recortada) de 4 lados em volta (0°, 45°, 90°, 135°), num atlas 2x2 de
+// 512 px por foto, com câmera ortográfica justa na caixa do modelo. aspect = largura/altura da foto.
+GLuint Renderer::bakeImpostor(const CharacterModel& m, float& aspect, float& height) {
+    const int S = 512, W = 2 * S;
+    GLuint tex, fbo, depth;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, W, W, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glGenRenderbuffers(1, &depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, W, W);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+    // fundo transparente com o verde médio das folhas (os mipmaps não clareiam a borda)
+    glClearColor(0.10f, 0.14f, 0.05f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    const glm::vec3 lo = m.boundsMin, hi = m.boundsMax, c = (lo + hi) * 0.5f;
+    const float rx = std::max(hi.x - lo.x, hi.z - lo.z) * 0.5f * 1.05f, ry = (hi.y - lo.y) * 0.5f * 1.02f;
+    aspect = rx / ry;
+    height = hi.y - lo.y;
+    impostor_.use();
+    impostor_.set("uModel", glm::mat4(1.0f));
+    impostor_.setMat4Array("uBones", identityBones_, BONE_COUNT);
+    impostor_.set("uBaseTex", 0);
+    impostor_.set("uHeightRange", glm::vec2(lo.y, hi.y));
+    for (int k = 0; k < 4; ++k) {
+        glViewport((k % 2) * S, (k / 2) * S, S, S);
+        const float a = k * 0.7853982f;
+        const glm::vec3 dir(std::sin(a), 0.0f, std::cos(a));
+        const glm::mat4 view = glm::lookAt(c + dir * (rx * 4.0f + 10.0f), c, glm::vec3(0, 1, 0));
+        const glm::mat4 proj = glm::ortho(-rx, rx, -ry, ry, 0.1f, rx * 8.0f + 30.0f);
+        impostor_.set("uViewProj", proj * view);
+        for (size_t i = 0; i < m.parts.size(); ++i) {
+            const CharacterModel::Material& mat = m.materials[m.parts[i].material];
+            impostor_.set("uAlphaCut", mat.alphaCut ? 1 : 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mat.texBase);
+            m.drawPart(i);
+        }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteRenderbuffers(1, &depth);
+    glClearColor(0, 0, 0, 0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    std::printf("[fundo] impostor da árvore: %.1f m de altura\n", height);
+    if (const char* dump = getenv("GA_IMPOSTOR_PNG")) { // depuração: salva o atlas
+        std::vector<unsigned char> px((size_t)W * W * 4);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        stbi_write_png(dump, W, W, 4, px.data(), W * 4);
+    }
+    return tex;
 }

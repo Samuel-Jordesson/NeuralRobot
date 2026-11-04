@@ -56,6 +56,7 @@ add_executable(ga
   src/terrain.cpp
   src/cloth.cpp
   src/cinematic.cpp
+  src/tree_wall.cpp
   src/mocap_live.cpp
   src/qrcode.cpp
   src/soldiers.cpp

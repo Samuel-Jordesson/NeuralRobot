@@ -1,7 +1,9 @@
 #include "gl_util.h"
 
 #include <glm/gtc/type_ptr.hpp>
+#include <algorithm>
 #include <cmath>
+#include <glm/glm.hpp>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -190,3 +192,70 @@ GLuint makeSolidTexture(unsigned char r, unsigned char g, unsigned char b, unsig
     unsigned char px[4] = {r, g, b, a};
     return makeTexture2D(px, 1, 1, srgb);
 }
+
+// ---------------------------------------------------------------- fundo (vista)
+namespace {
+float vhash(int x, int y, unsigned s) {
+    unsigned h = (unsigned)x * 374761393u + (unsigned)y * 668265263u + s * 2246822519u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return ((h ^ (h >> 16)) & 0xFFFFFF) / float(0xFFFFFF);
+}
+float vnoise(float x, float y, unsigned s) {
+    int xi = (int)std::floor(x), yi = (int)std::floor(y);
+    float fx = x - xi, fy = y - yi;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    float a = vhash(xi, yi, s), b = vhash(xi + 1, yi, s), c = vhash(xi, yi + 1, s), d = vhash(xi + 1, yi + 1, s);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+}
+// relevo: fBm suave (morros) + cristas (montanhas) que crescem com a distância
+float vistaHeight(float x, float z, float r0, float r1, unsigned s) {
+    const float d = std::sqrt(x * x + z * z);
+    const float k = std::clamp((d - r0) / (r1 - r0), 0.0f, 1.0f);
+    float hills = 0.0f, amp = 1.0f, f = 1.0f / 90.0f;
+    for (int o = 0; o < 5; ++o) { hills += (vnoise(x * f, z * f, s + o) - 0.5f) * amp; amp *= 0.5f; f *= 2.1f; }
+    float ridge = 0.0f;
+    amp = 1.0f;
+    f = 1.0f / 260.0f;
+    for (int o = 0; o < 5; ++o) {
+        float n = 1.0f - std::fabs(vnoise(x * f, z * f, s + 17 + o) * 2.0f - 1.0f);
+        ridge += n * n * amp;
+        amp *= 0.5f;
+        f *= 2.0f;
+    }
+    const float rise = std::min(1.0f, (d - r0) / 60.0f);          // nasce no nível do chão
+    // perto: morros de 15-45 m; longe: serras arredondadas de até ~110 m (mata atlântica, nada de picos alpinos)
+    const float h = (22.0f + 34.0f * hills) * (1.0f - k) + (30.0f + 55.0f * ridge) * k + 25.0f * k * k;
+    return std::max(-2.0f, h) * rise * rise * (3 - 2 * rise) - 1.5f;
+}
+} // namespace
+
+Mesh makeVista(float r0, float r1, unsigned seed) {
+    const int nr = 140, na = 720; // anéis x fatias (mais denso perto: raio cresce ao quadrado)
+    std::vector<float> v;
+    v.reserve((size_t)(nr + 1) * na * 6);
+    auto P = [&](float r, float a) {
+        float x = std::cos(a) * r, z = std::sin(a) * r;
+        return glm::vec3(x, vistaHeight(x, z, r0, r1, seed), z);
+    };
+    for (int i = 0; i <= nr; ++i) {
+        float t = (float)i / nr;
+        float r = r0 + (r1 - r0) * t * t;
+        for (int j = 0; j < na; ++j) {
+            float a = j * 6.2831853f / na;
+            glm::vec3 p = P(r, a);
+            glm::vec3 n = glm::normalize(glm::cross(P(r, a + 0.004f) - P(r, a - 0.004f), P(r - 1.5f, a) - P(r + 1.5f, a)));
+            if (n.y < 0.0f) n = -n;
+            v.insert(v.end(), {p.x, p.y, p.z, n.x, n.y, n.z});
+        }
+    }
+    std::vector<unsigned> idx;
+    for (int i = 0; i < nr; ++i)
+        for (int j = 0; j < na; ++j) {
+            unsigned a = i * na + j, b = i * na + (j + 1) % na, c = a + na, d = b + na;
+            idx.insert(idx.end(), {a, b, c, b, d, c});
+        }
+    return upload(v, idx);
+}
+
+float vistaHeightAt(float x, float z, float r0, float r1, unsigned seed) { return vistaHeight(x, z, r0, r1, seed); }
