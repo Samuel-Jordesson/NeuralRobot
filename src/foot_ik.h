@@ -5,6 +5,10 @@
 // Foot IK / posicionamento procedural dos pés: cada pé é ajustado à altura real do
 // terreno embaixo dele (degraus, caixas), a pelve desce para o pé mais baixo alcançar
 // e o joelho dobra com IK analítico de 2 ossos.
+// Leva o tornozelo (0 = esquerdo, 1 = direito) até 'ankle' (espaço do modelo) com IK de 2 ossos,
+// mantendo o giro do pé da animação. Serve para prender o pé no chão (não escorregar).
+void legTo(const Skeleton& sk, Pose& pose, int side, const glm::vec3& ankle, float weight);
+
 class FootIK {
 public:
     // model: matriz do personagem no mundo (base = pés em y = 0 no espaço do modelo).

@@ -23,6 +23,7 @@
 #include "gun_tuning.h"
 #include "free_editor.h"
 #include "anim_editor.h"
+#include "mocap_video.h"
 #include "level.h"
 #if !GA_EDITOR
 #include "level_baked.h"
@@ -151,6 +152,11 @@ struct Args {
     int coverClipSide = 0;
     float coverClipPhase = 0.0f;
     float crouch = 0.0f;        // agachado (m que o quadril desce), como atrás de uma cobertura baixa
+    const char* mocapIn = nullptr;   // --mocap-video pontos.txt anims/nome.anim: grava a animação e sai
+    const char* mocapOut = nullptr;
+    bool mocapStanding = false;      // --standing: pernas do vídeo (padrão: sentado)
+    const char* animClip = nullptr;  // --animclip nome t: foto com a pose de anims/nome.anim no tempo t
+    float animClipT = 0.0f;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -211,7 +217,10 @@ Args parseArgs(int argc, char** argv) {
             a.coverClip = next();
             a.coverClipSide = std::atoi(next());
             a.coverClipPhase = (float)std::atof(next());
-        } else if (!std::strcmp(argv[i], "--crouch")) a.crouch = (float)std::atof(next());
+        } else if (!std::strcmp(argv[i], "--mocap-video")) { a.mocapIn = next(); a.mocapOut = next(); }
+        else if (!std::strcmp(argv[i], "--standing")) a.mocapStanding = true;
+        else if (!std::strcmp(argv[i], "--animclip")) { a.animClip = next(); a.animClipT = (float)std::atof(next()); }
+        else if (!std::strcmp(argv[i], "--crouch")) a.crouch = (float)std::atof(next());
         else if (!std::strcmp(argv[i], "--kill")) a.killNpc = std::atoi(next());
         else if (!std::strcmp(argv[i], "--size")) std::sscanf(next(), "%dx%d", &a.width, &a.height);
     }
@@ -229,6 +238,7 @@ void printControls() {
         "  Botao dir.   mirar (zoom)\n"
         "  Botao esq.   atirar\n"
         "  G            soltar a arma\n"
+        "  K            golpe sem arma (perto de um inimigo: segura e soca)\n"
         "  Q            cobertura (entra/sai); A/D anda colado; botao dir. atira dela\n"
         "  Mouse        girar camera | Scroll: zoom\n"
         "  F1           ver pesos do rig (debug)\n"
@@ -244,7 +254,7 @@ int main(int argc, char** argv) {
 #if GA_EDITOR
     if (argc == 1) args.freeEdit = args.menu = true; // versão de desenvolvimento abre no editor
 #endif
-    const bool shotMode = args.shot != nullptr;
+    const bool shotMode = args.shot != nullptr || args.mocapIn != nullptr;
 
     // No Wayland o GLFW carrega o libdecor-gtk, que aborta no GNOME novo; e o GLEW
     // do Ubuntu só funciona com GLX. Usa X11 (XWayland) quando disponível.
@@ -294,6 +304,12 @@ int main(int argc, char** argv) {
     Skeleton skeleton = Skeleton::makeCrashDummy();
     CharacterModel character;
     if (!character.load(root + "/crash_dummy.glb", &skeleton, {})) return 1;
+    if (args.mocapIn) { // captura de movimento de vídeo -> animação do editor
+        std::string msg;
+        bool ok = bakeVideoMocap(skeleton, args.mocapIn, args.mocapOut, !args.mocapStanding, msg);
+        std::printf("[mocap-video] %s\n", msg.c_str());
+        return ok ? 0 : 1;
+    }
     // armas: pistola, AK-47 e AK-12 (cada uma com sua definição em guns.cpp)
     const GunDef* defs[3] = {&pistolDef(), &ak47Def(), &ak12Def()};
     CharacterModel gunMeshes[3];
@@ -367,6 +383,10 @@ int main(int argc, char** argv) {
     MocapClip runJumpClip, vaultClip;
     loadMixamoClip(root + "/animation-teste/parkur/Running Jump.fbx", skeleton, runJumpClip);
     loadMixamoClip(root + "/animation-teste/parkur/Jumping.fbx", skeleton, vaultClip);
+    MocapClip punchClip; // luta sem arma: segura o inimigo com a esquerda e soca com a direita
+    loadMixamoClip(root + "/animation-teste/luta/seg.fbx", skeleton, punchClip);
+    MocapClip comboClip; // socos sem arma (clique): cotovelada + gancho
+    loadMixamoClip(root + "/animation-teste/luta/Elbow Uppercut Combo.fbx", skeleton, comboClip);
     // pulo correndo: quem sobe é a física, então o clipe fica com o pé mais baixo sempre na altura
     // do chão do modelo (mantém o agachar da saída e da chegada, tira a subida)
     if (runJumpClip.valid()) {
@@ -511,7 +531,8 @@ int main(int argc, char** argv) {
         CharacterModel::releaseShared(); // solta o arquivo aberto e as texturas guardadas para as partes
         world.terrain = &terrain;
         scene.vista = id == SceneCasa; // fundo gerado (morros com mata, serras e montanhas)
-        scene.vistaTree = scene.vista ? assets.mesh("assets/arvore.glb") : nullptr; // a mata do fundo usa a árvore do cenário
+        scene.vistaTree = nullptr;
+        scene.vistaAtlas = scene.vista ? root + "/textures/casa_velha/mata_atlas.png" : ""; // árvores e coqueiros com sol
         scene.terrain = &terrain;
         scene.paint = &paint;
         const glm::vec3 start = L.start;
@@ -751,6 +772,8 @@ int main(int argc, char** argv) {
                 if (k == "low" || k == "stand") {
                     const MocapClip& c = (k == "low" ? coverLow : coverStand)[args.coverClipSide & 1];
                     if (c.valid()) p = c.sample(args.coverClipPhase);
+                } else if (k == "luta") { // golpe (fase 0..1)
+                    if (punchClip.valid()) p = punchClip.frames[(size_t)(std::clamp(args.coverClipPhase, 0.0f, 1.0f) * (punchClip.frames.size() - 1))];
                 } else if (k == "runjump" || k == "vault") { // parkour (fase 0..1)
                     const MocapClip& c = k == "vault" ? vaultClip : runJumpClip;
                     if (c.valid()) p = c.frames[(size_t)(std::clamp(args.coverClipPhase, 0.0f, 1.0f) * (c.frames.size() - 1))];
@@ -758,6 +781,15 @@ int main(int argc, char** argv) {
                     const MocapClip& c = (k.rfind("in", 0) == 0 ? coverIn : coverOut)[k.find("low") != std::string::npos];
                     if (c.valid()) p = c.frames[(size_t)std::clamp(args.coverClipPhase, 0.0f, 1.0f) * (c.frames.size() - 1)];
                 }
+            }
+            if (args.animClip) { // pose de uma animação do editor
+                AnimClip c;
+                if (c.load(root + "/anims/" + args.animClip + ".anim")) p = c.sample(args.animClipT);
+                pose = p;
+                computeGlobals(skeleton, p, globals);
+                computeSkinMatrices(skeleton, globals, skin);
+                fillGuns(model, gunMats);
+                return;
             }
             applyCrouch(skeleton, p, args.crouch, args.crouch * 0.8f);
             if (loadout.hand >= 0) applyShoulderPush(p, shotTouch.weight);
@@ -935,6 +967,29 @@ int main(int argc, char** argv) {
         runJumpT = frameTime(runJumpClip, kRunJumpTakeoff - 1.5f); // um pouco antes do impulso (entra suave)
     };
     // pose do clipe no tempo t, tocando uma vez (sem voltar ao começo)
+    // luta sem arma (clipe animation-teste/luta/seg.fbx): a esquerda agarra o inimigo e a direita soca
+    constexpr float kFightGrab = 12.0f / 30.0f, kFightHit = 49.0f / 30.0f, kFightEnd = 78.0f / 30.0f;
+    int fightTarget = -1;
+    float fightT = -1.0f, fightK = 1.0f, fightYaw = 0.0f;
+    bool fightHit = false;
+    glm::vec3 fightDir(0.0f, 0.0f, 1.0f);
+    // combo de socos (clique sem arma). Tempos do clipe Elbow Uppercut Combo (30 qps):
+    //   golpe 1 (cotovelada) acerta no quadro 21; sem 2º clique sai misturando a partir do 27;
+    //   golpe 2 (gancho) acerta no 40; volta à guarda até o 74 (dá para começar outro combo a partir do 58)
+    constexpr float kCombo1Hit = 21.0f / 30.0f, kCombo1Exit = 27.0f / 30.0f, kCombo2Hit = 40.0f / 30.0f;
+    constexpr float kComboCancel = 58.0f / 30.0f, kComboOut = 0.35f;
+    // sem a preparação: começa no quadro 13 (braço já saindo) e toca 25% mais rápido -> soco logo após o clique
+    constexpr float kComboStart = 13.0f / 30.0f, kComboSpeed = 1.25f;
+    // pés presos no chão na saída dos golpes (até o jogador andar): não escorregam voltando à pose parada
+    float feetLockW = 0.0f, feetLockT = 0.0f;
+    bool feetLockWant = false;
+    glm::vec3 feetLockPos[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
+    int comboStage = 0;          // 0 parado, 1 primeiro golpe, 2 segundo golpe
+    float comboT = 0.0f, comboExitT = -1.0f, hitStop = 0.0f, comboYaw = 0.0f;
+    bool comboQueued = false, comboHit1 = false, comboHit2 = false;
+    int comboTarget = -1;
+    glm::vec3 fightHandL(0.0f); // mão esquerda no mundo (quadro anterior): o inimigo seguro vai junto com ela
+    bool fightHandOk = false;
     auto sampleOnce = [](const MocapClip& c, float t) {
         const int n = (int)c.frames.size();
         float f = std::clamp(t / c.duration, 0.0f, 1.0f) * (n - 1);
@@ -1214,6 +1269,102 @@ int main(int argc, char** argv) {
             glfwGetCursorPos(win, &lastMx, &lastMy);
             lmbPressed = false; // esse clique só recaptura o mouse
         }
+        static bool fightKeyDebug = false;
+        if (const char* gf = getenv("GA_FIGHT")) { // depuração: no quadro N fica a 1,8 m do soldado 0 e dá o golpe
+            static int fr = 0;
+            if (++fr == std::atoi(gf) && !squad.soldiers.empty()) {
+                Soldier& s = *squad.soldiers[0];
+                glm::vec3 f(std::sin(s.yaw), 0.0f, std::cos(s.yaw));
+                body.pos = s.body.pos + f * 1.8f;
+                body.pos.y = s.body.pos.y;
+                charYaw = cam.yaw = std::atan2(-f.x, -f.z);
+                mouseCaptured = true;
+                fightKeyDebug = true;
+            }
+        }
+        if (const char* gc = getenv("GA_COMBO")) { // depuração: "N cliques": no quadro N a 1,5 m do soldado 0 e clica
+            static int fr = 0;
+            int at = 0, clicks = 1;
+            std::sscanf(gc, "%d %d", &at, &clicks);
+            ++fr;
+            if (fr == at && !squad.soldiers.empty()) {
+                Soldier& s = *squad.soldiers[0];
+                glm::vec3 f(std::sin(s.yaw), 0.0f, std::cos(s.yaw));
+                body.pos = s.body.pos + f * 1.1f;
+                body.pos.y = s.body.pos.y;
+                charYaw = cam.yaw = std::atan2(-f.x, -f.z);
+                mouseCaptured = true;
+            }
+            static glm::vec3 still(0.0f);
+            if (fr == at && !squad.soldiers.empty()) still = squad.soldiers[0]->body.pos;
+            if (fr >= at && !squad.soldiers.empty() && squad.soldiers[0]->alive) { // fica parado para o teste
+                squad.soldiers[0]->grabbed = true;
+                squad.soldiers[0]->holdPos = still;
+            }
+            static bool second = false;
+            if (fr == at + 1) lmbPressed = true;
+            if (clicks > 1 && !second && comboStage == 1 && comboT > kComboStart + 0.1f) { lmbPressed = true; second = true; }
+        }
+        // --- combo de socos: clique sem arma. Clique durante o 1º golpe fica guardado e emenda o 2º.
+        auto pickComboTarget = [&]() { // inimigo vivo mais perto na frente (até 2,2 m): vira para ele
+            float best = 2.2f;
+            int bi = -1;
+            for (size_t i = 0; i < squad.soldiers.size(); ++i) {
+                const Soldier& s = *squad.soldiers[i];
+                if (!s.alive) continue;
+                glm::vec3 d = s.body.pos - body.pos;
+                d.y = 0.0f;
+                float l = glm::length(d);
+                glm::vec3 fwdC(std::sin(cam.yaw), 0.0f, std::cos(cam.yaw)), fwdB(std::sin(charYaw), 0.0f, std::cos(charYaw));
+                if (l < 1e-3f || l > best || std::max(glm::dot(d / l, fwdC), glm::dot(d / l, fwdB)) < 0.3f) continue;
+                best = l;
+                bi = (int)i;
+            }
+            return bi;
+        };
+        if (lmbPressed && mouseCaptured && loadout.hand < 0 && !handling.busy() && playerAlive && comboClip.valid() &&
+            fightT < 0.0f && !coverOn && coverTrans == 0 && !vaultOn && !runJumpOn && body.grounded) {
+            if (comboStage == 0 || (comboStage == 2 && comboT >= kComboCancel)) { // começa (ou recomeça no fim)
+                comboStage = 1;
+                comboT = kComboStart;
+                comboExitT = -1.0f;
+                comboQueued = comboHit1 = comboHit2 = false;
+                comboTarget = pickComboTarget();
+                comboYaw = comboTarget >= 0 ? std::atan2(squad.soldiers[comboTarget]->body.pos.x - body.pos.x,
+                                                         squad.soldiers[comboTarget]->body.pos.z - body.pos.z)
+                                            : cam.yaw; // sem alvo: soca para onde a câmera olha
+            } else if (comboStage == 1 && comboT >= kComboStart + 0.04f && comboExitT < 0.0f) {
+                comboQueued = true; // guardado: no fim do 1º golpe emenda o 2º
+            }
+        }
+        static bool kWas = false; // K: golpe sem arma
+        const bool kKey = !menuOpen && glfwGetKey(win, GLFW_KEY_K) == GLFW_PRESS;
+        bool fightPressed = (kKey && !kWas) || fightKeyDebug;
+        fightKeyDebug = false;
+        kWas = kKey;
+        if (fightPressed && fightT < 0.0f && loadout.hand < 0 && playerAlive && punchClip.valid() && !coverOn &&
+            coverTrans == 0 && !vaultOn && !runJumpOn && body.grounded && !handling.locksMovement()) {
+            // inimigo vivo a até 2,4 m e mais ou menos na frente (do corpo ou da câmera)
+            float best = 1e9f;
+            for (size_t i = 0; i < squad.soldiers.size(); ++i) {
+                const Soldier& s = *squad.soldiers[i];
+                if (!s.alive) continue;
+                glm::vec3 d = s.body.pos - body.pos;
+                d.y = 0.0f;
+                float l = glm::length(d);
+                if (l > 2.4f || l < 1e-3f) continue;
+                glm::vec3 fwdC(std::sin(cam.yaw), 0.0f, std::cos(cam.yaw)), fwdB(std::sin(charYaw), 0.0f, std::cos(charYaw));
+                if (std::max(glm::dot(d / l, fwdC), glm::dot(d / l, fwdB)) < 0.35f) continue;
+                if (l < best) { best = l; fightTarget = (int)i; fightDir = d / l; }
+            }
+            if (best < 1e8f) {
+                fightT = 0.0f;
+                fightHit = false;
+                fightYaw = std::atan2(fightDir.x, fightDir.z);
+                // o clipe avança ~1,2 m até a mão esquerda chegar; perto demais anda menos
+                fightK = std::clamp((best - 0.68f) / 1.17f, 0.0f, 1.3f);
+            }
+        }
         double mx, my;
         glfwGetCursorPos(win, &mx, &my);
         if (mouseCaptured) {
@@ -1353,6 +1504,10 @@ int main(int argc, char** argv) {
         float wishSpeed = run ? animator.runSpeed() : animator.walkSpeed();
         bool jump = key(GLFW_KEY_SPACE) > 0;
         float standDist = 0.0f;
+        if (fightT >= 0.0f || comboStage > 0) { // lutando: o clipe manda no corpo
+            move = glm::vec3(0.0f);
+            jump = false;
+        }
         // mexeu antes de fechar a mão na arma: desiste de pegar e segue o movimento (a pose some suave)
         if (handling.locksMovement() && glm::length(move) > 0.1f && !handling.pastGrab()) handling.cancel();
         if (handling.locksMovement()) {
@@ -1549,10 +1704,147 @@ int main(int argc, char** argv) {
             }
         }
 
+        // --- luta: avança como no clipe, segura o inimigo na frente e no soco ele voa para trás e para cima
+        float fightW = 0.0f;
+        Pose fightPose;
+        if (fightT >= 0.0f) {
+            const float prevT = fightT;
+            fightT += dt;
+            const float T = punchClip.duration;
+            auto disp = [&](float t) { // quanto o quadril andou para a frente desde o começo
+                t = std::clamp(t, 0.0f, T);
+                return sampleOnce(punchClip, t).rootOffset.z - punchClip.frames.front().rootOffset.z + punchClip.travel.z * t / T;
+            };
+            const float step = (disp(fightT) - disp(prevT)) * fightK;
+            body.pos.x += fightDir.x * step;
+            body.pos.z += fightDir.z * step;
+            body.vel.x = body.vel.z = 0.0f;
+            charYaw = fightYaw;
+            if (getenv("GA_FIGHT")) { cam.yaw = fightYaw + 1.45f; cam.pitch = 0.12f; } // depuração: vista de lado
+            if (fightTarget >= 0 && fightTarget < (int)squad.soldiers.size()) {
+                Soldier& s = *squad.soldiers[fightTarget];
+                if (s.alive) {
+                    // da pegada até o soco o corpo dele fica preso na mão esquerda (a gola na mão)
+                    s.grabbed = fightT >= kFightGrab - 0.05f && fightT < kFightHit;
+                    s.holdPos = fightHandOk ? fightHandL + fightDir * 0.20f : body.pos + fightDir * 0.85f;
+                    s.alert = true;
+                }
+                if (!fightHit && fightT >= kFightHit) {
+                    fightHit = true;
+                    if (s.alive) {
+                        glm::vec3 head = glm::vec3(s.model * s.globals[HEAD][3]);
+                        squad.knockout(fightTarget, fightDir * 7.5f + glm::vec3(0.0f, 5.5f, 0.0f),
+                                       fightDir * 9.0f + glm::vec3(0.0f, 3.0f, 0.0f), head);
+                        cam.kick += 0.05f;
+                        hitKill = true;
+                        ++kills;
+                    }
+                }
+            }
+            fightPose = sampleOnce(punchClip, fightT);
+            float clipYaw = poseYaw(punchClip.frames.front()); // só o giro do começo sai (fixo): os pés não giram no chão
+            glm::quat q = glm::angleAxis(-clipYaw, glm::vec3(0, 1, 0));
+            fightPose.rot[HIPS] = glm::normalize(q * fightPose.rot[HIPS]);
+            fightPose.rootOffset.x = fightPose.rootOffset.z = 0.0f;
+            fightW = glm::smoothstep(0.0f, 0.12f, fightT) * glm::smoothstep(0.0f, 0.35f, kFightEnd - fightT);
+            if (fightT >= kFightEnd) {
+                fightT = -1.0f;
+                fightW = 0.0f;
+                if (fightTarget >= 0 && fightTarget < (int)squad.soldiers.size()) squad.soldiers[fightTarget]->grabbed = false;
+                fightTarget = -1;
+            }
+        }
+
+        // --- combo de socos
+        float comboW = 0.0f;
+        Pose comboPose;
+        if (comboStage > 0) {
+            hitStop = std::max(0.0f, hitStop - dt);
+            const float prevT = comboT;
+            comboT += (hitStop > 0.0f ? dt * 0.06f : dt) * kComboSpeed; // pausa curtinha no impacto (peso do golpe)
+            // segue o alvo: vira para ele e encurta a distância até ~0,95 m durante a preparação
+            if (comboTarget >= 0 && comboTarget < (int)squad.soldiers.size() && squad.soldiers[comboTarget]->alive) {
+                glm::vec3 d = squad.soldiers[comboTarget]->body.pos - body.pos;
+                d.y = 0.0f;
+                float l = glm::length(d);
+                if (l > 1e-3f) {
+                    comboYaw = wrapAngle(comboYaw + wrapAngle(std::atan2(d.x, d.z) - comboYaw) * (1.0f - std::exp(-14.0f * dt)));
+                    bool closing = (comboStage == 1 && comboT < kCombo1Hit) || (comboStage == 2 && comboT > kCombo1Exit && comboT < kCombo2Hit);
+                    static float slid = 0.0f; // quanto já escorregou neste golpe (limitado: pé no chão não patina)
+                    if (comboT < 0.05f) slid = 0.0f;
+                    if (false && closing && l > 1.0f && slid < 0.5f) { // (desligado: patinava) só vira para o alvo
+                        float stepLen = std::min({l - 1.0f, 1.6f * dt, 0.5f - slid});
+                        body.pos += d / l * stepLen;
+                        slid += stepLen;
+                    }
+                }
+            }
+            body.vel.x = body.vel.z = 0.0f;
+            charYaw = comboYaw;
+            if (getenv("GA_COMBO")) { cam.yaw = comboYaw + 1.45f; cam.pitch = 0.12f; } // depuração: vista de lado
+            // golpe acerta: o inimigo mais perto na frente, até 1,3 m
+            auto strike = [&](bool uppercut) {
+                glm::vec3 fwd(std::sin(charYaw), 0.0f, std::cos(charYaw));
+                int hitI = -1;
+                float best = 1.5f;
+                for (size_t i = 0; i < squad.soldiers.size(); ++i) {
+                    const Soldier& s = *squad.soldiers[i];
+                    if (!s.alive) continue;
+                    glm::vec3 d = s.body.pos - body.pos;
+                    d.y = 0.0f;
+                    float l = glm::length(d);
+                    if (l < best && l > 1e-3f && glm::dot(d / l, fwd) > 0.45f) { best = l; hitI = (int)i; }
+                }
+                if (hitI < 0) return;
+                Soldier& s = *squad.soldiers[hitI];
+                glm::vec3 head = glm::vec3(s.model * s.globals[HEAD][3]);
+                hitStop = uppercut ? 0.10f : 0.07f;
+                cam.kick += uppercut ? 0.06f : 0.035f;
+                if (s.health - (uppercut ? 70.0f : 45.0f) <= 0.0f) { // derrubou: voa (o gancho joga para cima)
+                    squad.knockout(hitI, fwd * (uppercut ? 3.0f : 5.0f) + glm::vec3(0.0f, uppercut ? 6.5f : 2.0f, 0.0f),
+                                   fwd * 5.0f + glm::vec3(0.0f, uppercut ? 6.0f : 1.0f, 0.0f), head);
+                    hitKill = true;
+                    ++kills;
+                } else {
+                    squad.damage(hitI, uppercut ? 70.0f : 45.0f, fwd, body.pos, head);
+                    s.body.pos += fwd * (uppercut ? 0.35f : 0.25f); // tranco para trás
+                    s.body.vel += fwd * 2.0f;
+                }
+            };
+            if (!comboHit1 && prevT < kCombo1Hit && comboT >= kCombo1Hit) { comboHit1 = true; strike(false); }
+            if (comboStage == 1 && comboT >= kCombo1Exit) {
+                if (comboQueued) comboStage = 2;                 // emenda o gancho
+                else if (comboExitT < 0.0f) comboExitT = comboT; // sai misturando
+            }
+            if (comboStage == 2 && !comboHit2 && prevT < kCombo2Hit && comboT >= kCombo2Hit) { comboHit2 = true; strike(true); }
+            comboPose = sampleOnce(comboClip, comboT);
+            {   // giro do clipe intacto: a frente do corpo aponta para o inimigo, o peito fica de lado na guarda e
+                // torce nos golpes como no clipe (pés plantados); o quadril anda como no clipe
+                const Pose& p0 = comboClip.frames.front();
+                glm::vec3 off = comboPose.rootOffset - p0.rootOffset;
+                comboPose.rootOffset = glm::vec3(off.x, comboPose.rootOffset.y, off.z);
+            }
+            setFingerCurl(skeleton, comboPose, 0, 1.0f, 0.85f); // punhos fechados
+            setFingerCurl(skeleton, comboPose, 1, 1.0f, 0.85f);
+            float in = glm::smoothstep(kComboStart, kComboStart + 0.08f, comboT); // entra rápido, já no meio do golpe
+            float out = comboExitT >= 0.0f ? 1.0f - glm::smoothstep(comboExitT, comboExitT + kComboOut, comboT)
+                                           : glm::smoothstep(0.0f, 0.4f, comboClip.duration - comboT);
+            if (feetLockW <= 0.0f && (comboExitT >= 0.0f || comboT > comboClip.duration - 0.4f)) feetLockWant = true; // começou a sair
+            comboW = in * out;
+            if ((comboExitT >= 0.0f && comboT >= comboExitT + kComboOut) || comboT >= comboClip.duration) {
+                comboStage = 0;
+                comboW = 0.0f;
+            }
+        }
+
         // --- direção do corpo: mirando, fica de frente para a mira; senão, vira para o movimento
         float prevYaw = charYaw;
         bool moving = glm::length(move) > 0.1f;
-        if (vaultOn) {
+        if (fightT >= 0.0f) {
+            charYaw = fightYaw;
+        } else if (comboStage > 0) {
+            charYaw = comboYaw;
+        } else if (vaultOn) {
             charYaw = vaultYaw;
         } else if (coverTrans > 0 && transClip) {
             // entrando: do jeito que estava até de costas para a parede no fim (o resto do giro vem do clipe)
@@ -1654,6 +1946,8 @@ int main(int argc, char** argv) {
             }
         }
         if (transW > 0.001f) pose = blendPose(pose, transPose, transW); // entrando/saindo da cobertura
+        if (fightW > 0.001f) pose = blendPose(pose, fightPose, fightW);  // luta sem arma
+        if (comboW > 0.001f) pose = blendPose(pose, comboPose, comboW);  // socos (clique)
         // parkour: pose dos clipes por cima da animação (entra e sai misturando)
         if (runJumpOn) {
             // entra em ~0,15 s a partir do começo e sai nos últimos 0,3 s (aterrissagem -> corrida)
@@ -1667,6 +1961,63 @@ int main(int argc, char** argv) {
             pose = blendPose(pose, sampleOnce(vaultClip, vaultT), w);
         }
         footIK.apply(skeleton, pose, charModel, world, animator.groundedWeight(), dt);
+        {   // pés presos: guarda onde estão ao começar a sair do golpe; soltam devagar quando o jogador anda
+            if (feetLockWant) {
+                glm::mat4 g[BONE_COUNT];
+                computeGlobals(skeleton, pose, g);
+                feetLockPos[0] = glm::vec3(charModel * g[FOOT_L][3]);
+                feetLockPos[1] = glm::vec3(charModel * g[FOOT_R][3]);
+                feetLockW = 1.0f;
+                feetLockT = 0.0f;
+                feetLockWant = false;
+            }
+            if (feetLockW > 0.0f) {
+                feetLockT += dt;
+                bool release = (comboStage == 1 && comboExitT < 0.0f) || glm::length(move) > 0.1f || !body.grounded || feetLockT > 2.5f;
+                if (release) feetLockW = std::max(0.0f, feetLockW - dt * 5.0f);
+                const glm::mat4 inv = glm::inverse(charModel);
+                for (int sd = 0; sd < 2; ++sd) legTo(skeleton, pose, sd, glm::vec3(inv * glm::vec4(feetLockPos[sd], 1.0f)), feetLockW);
+            }
+        }
+        if (getenv("GA_COMBO") && comboStage > 0) { // depuração: pés no mundo (escorregando?)
+            glm::mat4 g[BONE_COUNT];
+            computeGlobals(skeleton, pose, g);
+            glm::vec3 a = glm::vec3(charModel * g[FOOT_L][3]), b = glm::vec3(charModel * g[FOOT_R][3]);
+            std::printf("[pes] t %.3f w %.2f L %.3f %.3f %.3f R %.3f %.3f %.3f\n", comboT, comboW, a.x, a.y, a.z, b.x, b.y, b.z);
+        }
+        // luta: a esquerda segura o peito (gola) do inimigo e o soco da direita vai no rosto dele
+        if (fightW > 0.001f && fightTarget >= 0 && fightTarget < (int)squad.soldiers.size()) {
+            const Soldier& s = *squad.soldiers[fightTarget];
+            const glm::mat4 inv = glm::inverse(charModel);
+            glm::mat4 g[BONE_COUNT];
+            computeGlobals(skeleton, pose, g);
+            const glm::vec3 back = glm::vec3(inv * glm::vec4(-fightDir, 0.0f)); // do inimigo para o jogador
+            float grabW = glm::smoothstep(kFightGrab - 0.2f, kFightGrab, fightT) * (1.0f - glm::smoothstep(kFightHit - 0.02f, kFightHit + 0.12f, fightT));
+            if (grabW > 0.001f && !fightHit) {
+                // segura pela gola com o braço quase esticado na frente do peito e vai puxando o inimigo
+                // para perto do punho direito até o soco (o corpo dele vai junto com essa mão)
+                float u = glm::smoothstep(kFightGrab, kFightHit, fightT);
+                glm::vec3 holdA(0.12f, 1.30f, 0.58f), holdB(-0.02f, 1.36f, 0.50f); // no espaço do personagem
+                glm::mat4 hand = g[HAND_L];
+                hand[3] = glm::vec4(glm::mix(holdA, holdB, u) + pose.rootOffset * glm::vec3(0, 1, 0), 1.0f);
+                applyHandTarget(skeleton, pose, false, hand, grabW * fightW);
+                setFingerCurl(skeleton, pose, 0, 0.85f * grabW, 0.6f * grabW); // mão fechada na gola
+            }
+            float punchW = glm::smoothstep(kFightHit - 0.22f, kFightHit, fightT) * (1.0f - glm::smoothstep(kFightHit, kFightHit + 0.25f, fightT));
+            if (punchW > 0.001f) {
+                glm::vec3 face = fightHit ? glm::vec3(g[HAND_R][3]) // já voou: o braço termina o golpe onde está
+                                          : glm::vec3(inv * (s.model * glm::vec4(glm::vec3(s.globals[HEAD][3]) + glm::vec3(0.0f, 0.04f, 0.0f), 1.0f))) + back * 0.12f;
+                glm::mat4 hand = g[HAND_R];
+                hand[3] = glm::vec4(face, 1.0f);
+                applyHandTarget(skeleton, pose, true, hand, punchW * 0.85f * fightW);
+                setFingerCurl(skeleton, pose, 1, 1.0f * punchW, 0.8f * punchW); // punho fechado
+            }
+            computeGlobals(skeleton, pose, g);
+            fightHandL = glm::vec3(charModel * g[HAND_L] * glm::vec4(skeleton.tail[HAND_L] - skeleton.joint[HAND_L], 1.0f));
+            fightHandOk = true;
+        } else {
+            fightHandOk = false;
+        }
         if (coverPeek > 0.001f) {
             // tronco inclinado para o lado da quina (expõe o mínimo)
             glm::vec3 charRight(-std::cos(charYaw), 0.0f, std::sin(charYaw));
@@ -2217,6 +2568,21 @@ int main(int argc, char** argv) {
                 stbi_flip_vertically_on_write(1);
                 stbi_write_png(path, fbw, fbh, 4, px.data(), fbw * 4);
                 glfwSetWindowShouldClose(win, 1);
+            }
+        }
+        if (const char* fs = std::getenv("GA_FIGHTSHOTS"); fs && (fightT >= 0.0f || comboStage > 0)) { // depuração: fotos da luta a cada 0,15 s
+            static float nextShot = 0.0f;
+            static int shotN = 0;
+            const float ft = fightT >= 0.0f ? fightT : comboT;
+            if (ft >= nextShot) {
+                nextShot += 0.15f;
+                std::vector<unsigned char> px((size_t)fbw * fbh * 4);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glReadPixels(0, 0, fbw, fbh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                stbi_flip_vertically_on_write(1);
+                char path[600];
+                std::snprintf(path, sizeof(path), "%s/luta_%02d_%.2f_e%d.png", fs, shotN++, ft, comboStage);
+                stbi_write_png(path, fbw, fbh, 4, px.data(), fbw * 4);
             }
         }
         if (const char* es = std::getenv("GA_EDSHOT")) { // depuração: foto da janela no quadro N (com GA_CLICK/GA_DRAG testa o editor)

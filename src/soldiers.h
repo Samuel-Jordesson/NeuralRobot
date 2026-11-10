@@ -49,6 +49,10 @@ struct Soldier {
     glm::vec3 coverSpot{0.0f};
     float coverT = 0.0f, searchT = 0.0f, crouch = 0.0f;
     bool popped = false;          // levantado atirando
+
+    // luta: seguro pela mão do jogador (não anda nem atira; o corpo vai até holdPos)
+    bool grabbed = false;
+    glm::vec3 holdPos{0.0f};
 };
 
 // Os soldados da arena: enxergam o jogador, chegam perto, andam de lado e atiram em rajadas.
@@ -74,6 +78,8 @@ public:
     Hit raycast(const glm::vec3& o, const glm::vec3& dir, float maxT) const;
     // Retorna true se esse tiro matou.
     bool damage(int i, float amount, const glm::vec3& shotDir, const glm::vec3& shooterPos, const glm::vec3& hitPoint);
+    // Soco que derruba: o corpo vira ragdoll com essa velocidade (todo ele) e o impulso no ponto do golpe.
+    void knockout(int i, const glm::vec3& bodyVel, const glm::vec3& impulse, const glm::vec3& hitPoint);
     int aliveCount() const;
     std::vector<glm::vec3> alivePositions() const;
     std::vector<CharacterBody*> aliveBodies();

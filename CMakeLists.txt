@@ -53,6 +53,7 @@ add_executable(ga
   src/level.cpp
   src/free_editor.cpp
   src/anim_editor.cpp
+  src/mocap_video.cpp
   src/terrain.cpp
   src/cloth.cpp
   src/cinematic.cpp

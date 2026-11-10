@@ -178,7 +178,6 @@ prop grass_medium_02_12 37.8248 0 100.763 337.052 0.707002 assets/casa_velha/gra
 prop grass_medium_02_13 26.8497 0 13.2536 329.96 1.07221 assets/casa_velha/grass_medium_02.glb
 prop grass_medium_02_14 25.0258 0 -24.3744 295.278 0.903498 assets/casa_velha/grass_medium_02.glb
 prop grass_medium_02_15 38.1719 0 88.8604 175.011 0.709934 assets/casa_velha/grass_medium_02.glb
-# fundo antigo (fundo.glb) trocado pelo fundo gerado no renderer
 prop arvore_26 -53.9031 0 28.153 108.702 1.25628 assets/arvore.glb
 prop grass_medium_02_16 -52.4031 0 29.153 43.5274 1 assets/casa_velha/grass_medium_02.glb
 prop arvore_27 -45.0542 0 11.1039 143.373 1.57595 assets/arvore.glb

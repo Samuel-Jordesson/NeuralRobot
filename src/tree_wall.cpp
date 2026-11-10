@@ -107,15 +107,19 @@ void TreeWall::build(float r0, float r1, unsigned seed, GLuint atlas, float aspe
         idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     };
     // densidade cai com a distância (perto: mata fechada; longe: o relevo já tem cor de mata)
-    for (int i = 0; i < 6000; ++i) {
+    // a mata encosta no mapa: fora do retângulo jogável (x -58..62, z -48..108), mais densa perto dele
+    int placed = 0;
+    for (int i = 0; i < 60000 && placed < 9000; ++i) {
         float t = U(rng);
         float r = r0 + (r1 - r0) * t * t;
         float a = U(rng) * 6.2831853f;
-        glm::vec3 p(std::cos(a) * r, 0.0f, std::sin(a) * r);
-        p.y = std::max(0.0f, vistaHeightAt(p.x, p.z, 125.0f, 960.0f, 7u)) - 0.3f;
+        glm::vec3 p(5.0f + std::cos(a) * r, 0.0f, 30.0f + std::sin(a) * r);
+        if (p.x > -58.0f && p.x < 62.0f && p.z > -48.0f && p.z < 108.0f) continue;
+        ++placed;
+        p.y = -0.15f; // no chão do mapa (os morros começam depois da mata)
         const int variant = (int)(U(rng) * 4) % 4;
         // mais baixas que as do mapa (6 a 8,5 m), largura da foto do modelo
-        const float h = 6.0f + 2.5f * U(rng), w = h * aspect * 2.0f;
+        const float h = 9.0f + 5.0f * U(rng), w = h * aspect * 2.0f;
         const float rot = U(rng) * 3.14159f;
         glm::vec3 s1(std::cos(rot), 0, std::sin(rot)), s2(-s1.z, 0, s1.x);
         quad(p, s1, w, h, variant);

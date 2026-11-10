@@ -35,7 +35,7 @@ struct GraphicsSettings {
     bool dayCycle = false;
     float dayCycleSpeed = 1.0f; // horas do jogo por minuto real
     float sunAzimuth = 25.0f;   // graus, gira o caminho do sol
-    float fogDensity = 1.0f;
+    float fogDensity = 0.4f;
     bool clouds = true;
     // vento (tecidos e o que mais balança): liga, força (m/s), direção (graus, 0 = para +Z) e rajadas (0..1)
     bool wind = false;
@@ -47,13 +47,13 @@ struct GraphicsSettings {
     bool bloom = true;
     float bloomIntensity = 1.0f;
     bool autoExposure = true;
-    float exposure = 0.0f;    // compensação em EV
-    float contrast = 1.05f;
-    float saturation = 1.05f;
-    float temperature = 0.0f; // -1 frio .. +1 quente
-    float vignette = 0.35f;
-    float filmGrain = 0.12f;
-    float chromaticAberration = 0.15f;
+    float exposure = -0.3f;    // compensação em EV
+    float contrast = 1.15f;
+    float saturation = 1.15f;
+    float temperature = 0.06f; // -1 frio .. +1 quente
+    float vignette = 0.25f;
+    float filmGrain = 0.05f;
+    float chromaticAberration = 0.03f;
 
     // Aplica um preset de qualidade (não mexe nas opções artísticas).
     void applyPreset(int p);

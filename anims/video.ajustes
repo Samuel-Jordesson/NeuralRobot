@@ -1,0 +1,41 @@
+# Ajustes feitos à mão em cima da captura do vídeo (videoteste.mp4). Lidos por ./ga --mocap-video.
+# mao esq|dir t0 t1 rampa  x y z  dedos fx fy fz  palma px py pz  cotovelo ex ey ez  curva polegar
+#   pulso a partir do meio dos ombros (m): +X esquerda do personagem, +Y cima, +Z frente
+# tronco t0 t1 rampa graus (+ = para a frente)   cabeca t0 t1 rampa graus (+ = para baixo)
+
+# 0,7 - 3,1 s: mãos apoiadas na mesa, na frente da barriga (fora do quadro no vídeo)
+mao esq 0.75 3.05 0.30   0.20 -0.40 0.30   -0.25 -0.15 1   0 -1 0    0.40 -0.50 -0.20   0.35 0.25
+mao dir 0.75 3.05 0.30  -0.20 -0.40 0.30    0.25 -0.15 1   0 -1 0   -0.40 -0.50 -0.20   0.35 0.25
+
+# 3,55 - 4,0 s: palmas juntas em pé, dedos para cima, na frente do peito/queixo
+mao esq 3.55 3.98 0.22 0.025 -0.24 0.30 0 1 0.15 -1 0 0 0.45 -0.45 -0.10 0.0 0.0
+mao dir 3.55 3.98 0.22 -0.025 -0.24 0.30 0 1 0.15 1 0 0 -0.45 -0.45 -0.10 0.0 0.0
+
+# 4,1 - 4,45 s: dedos entrelaçados na frente do peito
+mao esq 4.10 4.45 0.12   0.06 -0.24 0.27   -1 0.25 0.3   0 0 -1    0.50 -0.40 -0.10   0.55 0.1
+mao dir 4.10 4.45 0.12  -0.06 -0.24 0.27    1 0.25 0.3   0 0 -1   -0.50 -0.40 -0.10   0.55 0.1
+
+# 4,55 - 5,0 s: entrelaçados mais alto, cotovelos abertos para os lados
+mao esq 4.58 4.98 0.12 0.06 -0.17 0.25 -1 0.15 0.2 0 0 -1 0.60 -0.05 -0.05 0.55 0.1
+mao dir 4.58 4.98 0.12 -0.06 -0.17 0.25 1 0.15 0.2 0 0 -1 -0.60 -0.05 -0.05 0.55 0.1
+
+# 5,1 - 5,4 s: mãos na gola da camisa, dedos fechando
+mao esq 5.10 5.30 0.10 0.13 -0.15 0.13 -0.15 1 0.2 0 0 -1 0.45 -0.50 -0.15 0.65 0.4
+mao dir 5.10 5.30 0.10 -0.13 -0.15 0.13 0.15 1 0.2 0 0 -1 -0.45 -0.50 -0.15 0.65 0.4
+
+# 5,65 - 6,4 s: joinha com as duas mãos, antebraços em pé na altura do ombro
+mao esq 5.48 6.40 0.12 0.26 -0.15 0.22 0 0.2 1 -1 0 0 0.35 -0.55 -0.05 1.0 0.0
+mao dir 5.48 6.40 0.12 -0.26 -0.15 0.22 0 0.2 1 1 0 0 -0.35 -0.55 -0.05 1.0 0.0
+
+# 6,55 - 6,95 s: mãos juntas na frente do peito (esfregando)
+mao esq 6.55 6.95 0.15   0.05 -0.16 0.26   -1 0.3 0.4   -0.6 0 -0.8    0.50 -0.35 -0.10   0.35 0.2
+mao dir 6.55 6.95 0.15  -0.05 -0.16 0.26    1 0.3 0.4    0.6 0 -0.8   -0.50 -0.35 -0.10   0.35 0.2
+
+# 7,1 - 9,2 s: chega perto da câmera, antebraços deitados na mesa, mãos perto uma da outra
+tronco 7.10 9.20 0.45 22
+cabeca 7.10 9.20 0.45 -38
+mao esq 7.15 9.20 0.35 0.13 -0.32 0.45 -0.6 -0.1 1 0 -1 0 0.55 -0.30 -0.10 0.3 0.2
+mao dir 7.15 7.95 0.35 -0.13 -0.32 0.45 0.6 -0.1 1 0 -1 0 -0.55 -0.30 -0.10 0.3 0.2
+# 8,1 - 8,6 s: a direita passa na frente do corpo (aceno), depois volta à mesa
+mao dir 8.15 8.45 0.20   0.05 -0.22 0.38   -1 0.2 0.3   0 -0.3 -1   -0.55 -0.20 -0.10   0.3 0.2
+mao dir 8.75 9.20 0.20 -0.13 -0.32 0.45 0.6 -0.1 1 0 -1 0 -0.55 -0.30 -0.10 0.3 0.2

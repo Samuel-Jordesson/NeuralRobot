@@ -17,6 +17,29 @@ float approach(float cur, float target, float rate, float dt) {
 
 } // namespace
 
+void legTo(const Skeleton& sk, Pose& pose, int side, const glm::vec3& ankle, float weight) {
+    if (weight <= 0.001f) return;
+    const Bone th = side == 0 ? THIGH_L : THIGH_R, sh = side == 0 ? SHIN_L : SHIN_R, f = side == 0 ? FOOT_L : FOOT_R;
+    glm::mat4 g[BONE_COUNT];
+    computeGlobals(sk, pose, g);
+    const glm::quat footWorld = rotOf(g[f]);
+    const glm::vec3 H = posOf(g[th]), K = posOf(g[sh]), A = posOf(g[f]);
+    const glm::vec3 T = glm::mix(A, ankle, std::clamp(weight, 0.0f, 1.0f));
+    float a = glm::length(K - H), b = glm::length(A - K);
+    float d = std::clamp(glm::length(T - H), std::fabs(a - b) + 1e-3f, a + b - 1e-3f);
+    float cur = std::acos(std::clamp(glm::dot(glm::normalize(H - K), glm::normalize(A - K)), -1.0f, 1.0f));
+    float des = std::acos(std::clamp((a * a + b * b - d * d) / (2.0f * a * b), -1.0f, 1.0f));
+    glm::vec3 axis = glm::cross(K - H, A - K);
+    if (glm::length(axis) < 1e-4f) axis = rotOf(g[th]) * glm::vec3(1, 0, 0);
+    axis = glm::normalize(axis);
+    pose.rot[sh] = glm::normalize(glm::inverse(rotOf(g[th])) * (glm::angleAxis(cur - des, axis) * rotOf(g[sh])));
+    computeGlobals(sk, pose, g);
+    glm::quat swing = glm::rotation(glm::normalize(posOf(g[f]) - H), glm::normalize(T - H));
+    pose.rot[th] = glm::normalize(glm::inverse(rotOf(g[sk.parent[th]])) * (swing * rotOf(g[th])));
+    computeGlobals(sk, pose, g);
+    pose.rot[f] = glm::normalize(glm::inverse(rotOf(g[sh])) * footWorld);
+}
+
 void FootIK::apply(const Skeleton& sk, Pose& pose, const glm::mat4& model, const World& world, float weight, float dt) {
     if (!enabled) weight = 0.0f;
     const Bone feet[2] = {FOOT_L, FOOT_R}, thighs[2] = {THIGH_L, THIGH_R}, shins[2] = {SHIN_L, SHIN_R};

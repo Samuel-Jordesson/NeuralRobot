@@ -33,7 +33,8 @@ struct RenderScene {
     const struct Terrain* terrain = nullptr;    // relevo esculpido no editor
     std::vector<const class Cloth*> cloths;     // tecidos simulados (malha já no mundo)
     bool vista = false;                         // fundo de morros e montanhas em volta do mapa
-    const CharacterModel* vistaTree = nullptr;  // modelo de árvore fotografado para a mata ao fundo
+    const CharacterModel* vistaTree = nullptr;
+    std::string vistaAtlas; // foto pronta da mata do fundo (2x2, fundo transparente); vazio = fotografa vistaTree  // modelo de árvore fotografado para a mata ao fundo
     // profundidade de campo (câmera de cena do editor de animação): lente em mm, abertura f/, foco em m
     struct Dof {
         bool on = false;

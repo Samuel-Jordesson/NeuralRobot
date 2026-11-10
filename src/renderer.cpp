@@ -1086,9 +1086,9 @@ void Renderer::drawScene(Shader& worldSh, Shader& skinSh, const RenderScene& s, 
         glDepthMask(GL_FALSE);
         skinSh.use();
         if (painted) skinSh.set("uPaintOn", 0);
-        noAlphaCut_ = true;
+        // o recorte continua valendo aqui: onde a folha é transparente o que está atrás é mais longe,
+        // e o LEQUAL sozinho deixaria o retângulo inteiro aparecer
         for (int idx : foliage_) drawSkinned(skinSh, *s.props[idx].mesh, s.props[idx].model, identityBones_, true);
-        noAlphaCut_ = false;
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
     }
@@ -1273,11 +1273,12 @@ void Renderer::render(const RenderScene& s, float dt, GLuint targetFbo) {
     const float skyFogDist = 700.0f;
     g_prof.mark("inicio");
     if (s.world) updateRoof(*s.world);
-    if (s.vista && s.vistaTree && !trees_.built()) {
-        // mata ao fundo: impostor do modelo de árvore do cenário (fotos de 4 ângulos num atlas 2x2)
-        float aspect = 1.0f, height = 1.0f;
-        GLuint atlas = bakeImpostor(*s.vistaTree, aspect, height);
-        trees_.build(100.0f, 240.0f, 21u, atlas, aspect);
+    if (s.vista && (s.vistaTree || !s.vistaAtlas.empty()) && !trees_.built()) {
+        // mata ao fundo: foto pronta (árvores e coqueiros com sol) ou impostor do modelo de árvore do cenário
+        float aspect = 0.5f, height = 1.0f;
+        GLuint atlas = !s.vistaAtlas.empty() ? stainTexture(s.vistaAtlas) : 0;
+        if (!atlas && s.vistaTree) atlas = bakeImpostor(*s.vistaTree, aspect, height);
+        trees_.build(55.0f, 122.0f, 21u, atlas, aspect);
     }
     updateSun();
     updateEnvironment(s.time);

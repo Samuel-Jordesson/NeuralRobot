@@ -296,19 +296,28 @@ float Squad::update(World& w, const Player& pl, Weapon& fx, float dt) {
             if (l < 1.2f && l > 1e-3f) move += d / l * (1.2f - l);
         }
 
+        if (s.grabbed) move = glm::vec3(0.0f); // seguro: não foge
         float moveLen = glm::length(move);
         for (float t = 0.0f; t < dt - 1e-5f; t += 1.0f / 60.0f) {
             float h = std::min(1.0f / 60.0f, dt - t);
             s.body.step(w, moveLen > 0.05f ? move / moveLen : glm::vec3(0.0f), speed * std::min(1.0f, moveLen), false, h);
         }
-        // e não atravessam o jogador
+        // e não atravessam o jogador (seguro: vai junto com a mão dele)
         glm::vec3 d = s.body.pos - pl.pos;
         d.y = 0.0f;
-        if (glm::length(d) < 0.65f && glm::length(d) > 1e-3f) s.body.pos += d / glm::length(d) * (0.65f - glm::length(d));
+        if (s.grabbed) {
+            float k = 1.0f - std::exp(-35.0f * dt); // preso na mão: acompanha quase na hora
+            s.body.pos.x += (s.holdPos.x - s.body.pos.x) * k;
+            s.body.pos.z += (s.holdPos.z - s.body.pos.z) * k;
+            s.body.vel.x = s.body.vel.z = 0.0f;
+        } else if (glm::length(d) < 0.65f && glm::length(d) > 1e-3f) {
+            s.body.pos += d / glm::length(d) * (0.65f - glm::length(d));
+        }
 
         // --- direção do corpo: de frente para o jogador quando o vê, senão para onde anda
         float targetYaw = s.yaw;
-        if ((s.alert && visible) || s.cover == 2) targetYaw = std::atan2(flatTo.x, flatTo.z);
+        if (s.grabbed) targetYaw = std::atan2(flatTo.x, flatTo.z);
+        else if ((s.alert && visible) || s.cover == 2) targetYaw = std::atan2(flatTo.x, flatTo.z);
         else if (moveLen > 0.1f) targetYaw = std::atan2(move.x, move.z);
         else if (!s.alert) targetYaw = s.homeYaw;
         s.yaw = wrapAngle(s.yaw + wrapAngle(targetYaw - s.yaw) * (1.0f - std::exp(-8.0f * dt)));
@@ -325,13 +334,13 @@ float Squad::update(World& w, const Player& pl, Weapon& fx, float dt) {
         }
         s.anim.update(ai);
 
-        s.aimW += ((s.alert && visible ? 1.0f : 0.0f) - s.aimW) * (1.0f - std::exp(-6.0f * dt));
+        s.aimW += ((s.alert && visible && !s.grabbed ? 1.0f : 0.0f) - s.aimW) * (1.0f - std::exp(-6.0f * dt));
         s.model = glm::translate(glm::mat4(1.0f), s.body.pos) * glm::rotate(glm::mat4(1.0f), s.yaw, glm::vec3(0, 1, 0));
         glm::vec3 aimAt = s.alert ? chest : s.body.pos + glm::vec3(std::sin(s.yaw), 1.5f, std::cos(s.yaw)) * 10.0f;
         pose(s, aimAt);
 
         // --- rajadas: espera um pouco ao avistar, atira 3 a 6 tiros e pausa
-        if (!(visible && s.aimW > 0.85f && s.seenT > 0.7f)) continue;
+        if (s.grabbed || !(visible && s.aimW > 0.85f && s.seenT > 0.7f)) continue;
         if (s.burst <= 0) {
             s.pauseT -= dt;
             if (s.pauseT <= 0.0f) {
@@ -408,6 +417,16 @@ bool Squad::damage(int i, float amount, const glm::vec3& shotDir, const glm::vec
     s.deathT = 0.0f;
     s.rag.start(assets_->skeleton, s.globals, s.model, s.body.vel, shotDir * 4.0f, hitPoint);
     return true;
+}
+
+void Squad::knockout(int i, const glm::vec3& bodyVel, const glm::vec3& impulse, const glm::vec3& hitPoint) {
+    Soldier& s = *soldiers[i];
+    if (!s.alive) return;
+    s.health = 0.0f;
+    s.alive = false;
+    s.grabbed = false;
+    s.deathT = 0.0f;
+    s.rag.start(assets_->skeleton, s.globals, s.model, bodyVel, impulse, hitPoint);
 }
 
 int Squad::aliveCount() const {
